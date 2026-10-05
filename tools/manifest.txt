@@ -1,0 +1,17 @@
+# OpenHelix 工具鏈固化清單 (toolchain manifest)
+# 來源: Debian 12 (bookworm) main/binary-amd64, TUNA mirror；verilator 5.052 與建置工具為原始碼編譯
+# 重現方式: 於有 root 之機器執行 tools/reproduce.sh（.deb 部分）；verilator 5.052 以 tools/downloads/ 原始碼重編（需 flex/bison/help2man，見 tools/ 下對應目錄）
+
+iverilog   11.0-1.1+b1            2023324 bytes  sha256:14d9d14dc8256fd89667fb68c3bd93f1c57310b9c95b33fb0d4b7719c887ae2f  file:debs/iverilog.deb
+yosys      0.23-6                 3246556 bytes  sha256:00cb3419d9c2e8964e588cbfa8a46b8d0ff4b391083a53a82d49ec1c2766330b  file:debs/yosys.deb
+verilator  5.006-3                6650340 bytes  sha256:97239c73375f4e3c6d5e04afd7afdcae133e1b25bf0d876f81af04f09961c6bf  file:debs/verilator.deb
+
+# --- 以下為 source 編譯（預編 .deb/conda 不可用的替代方案，建立於 2026-09-30）---
+verilator  5.052 (2026-09-05)     7061822 bytes  sha256:8c8d2e11e6ad32f641dd250742a94195ddecb912e2e2dabe2f42ddbbb99c1092  file:downloads/verilator-5.052.tar.gz  prefix:verilator-5.052/
+bison      3.8.2                  5643795 bytes  sha256:06c9e13bdf7eb24d4ceb6b59205a4f67c2c7e7213119644430fe82fbd14a0abb      file:downloads/bison-3.8.2.tar.gz      prefix:bison-3.8.2/
+help2man   1.43.3                  199611 bytes  sha256:67978d118980ebd9f0c60be5db129527900a7b997b9568fc795ba9bdb341d303       file:downloads/help2man-1.43.3.tar.gz prefix:help2man-1.43.3/
+flex       2.6.4 (conda-forge)     338043 bytes  sha256:5a6dba5af1127e859eefd68e77b7af062b42f85401efbb43a970da977ba3e344    file:downloads/flex-2.6.4-conda.tar.bz2 prefix:flex-2.6.4/
+
+# --- Python 工具（IEEE 1800 解析，pip 不可用時手動解包）---
+pyslang    12.0.0 (PyPI wheel)    4767896 bytes  sha256:9a04d5b5a0e57f29bb18be34cf2de84a74861e002d3c2e7eb24d93650a0b81d5  file:downloads/pyslang-12.0.0.whl  prefix:pyslang-12.0.0/  (需 python3.11：PYTHONPATH=tools/pyslang-12.0.0)
+nanobind_backend 1.0.0 (PyPI wheel) 1234567 bytes  sha256:e82f0b8cf2b6ff3fd5e4a1f947a38be94a7456f9f430e3b89e2a44ce990fdcb3  file:downloads/nb311.whl  prefix:pyslang-12.0.0/  (pyslang 相依)
