@@ -27,6 +27,8 @@ package oh1_pkg;
   localparam logic [2:0] F3_BAR   = 3'b011;
   localparam logic [2:0] F3_WEXIT = 3'b100;
   localparam logic [2:0] F3_TEXIT = 3'b101;
+  localparam logic [2:0] F3_VDOT  = 3'b110;  // M1.0：4-lane FP16 dot-product（Tensor Lite）
+  localparam logic [2:0] F3_WSPAWN = 3'b111; // M2.0：多 warp 產生（M1.0 預留）
 
   // ---- CSR 位址（唯讀）----
   parameter logic [11:0] CSR_TID    = 12'h8C0;  // lane 線性 id
@@ -41,6 +43,7 @@ package oh1_pkg;
     I_LW, I_SW,
     I_CSRR,
     I_SPLIT, I_JOIN, I_TMC, I_BAR, I_WEXIT, I_TEXIT,
+    I_VDOT, I_WSPAWN,
     I_ILL
   } ikind_e;
 
@@ -148,10 +151,21 @@ package oh1_pkg;
                      F3_SPLIT: return I_SPLIT; F3_JOIN: return I_JOIN;
                      F3_TMC:   return I_TMC;   F3_BAR:  return I_BAR;
                      F3_WEXIT: return I_WEXIT; F3_TEXIT:return I_TEXIT;
+                     F3_VDOT:  return I_VDOT;                    // M1.0 Tensor Lite
+                     F3_WSPAWN:return I_WSPAWN;                  // M2.0 多 warp
                      default: return I_ILL;
                    endcase
       default: return I_ILL;
     endcase
+  endfunction
+
+  // ---- M1.0 Tensor Lite：vdot 編碼（rd 為累加器目標暫存器）----
+  // vdot rd, rs1, rs2, len：rd 為目標累加器，rs1/rs2 為向量基址（各 lane 獨立），
+  // len=向量長度（2/4/8，儲存於 rs2[4:0] 或 imm——此處用 rs2 欄位傳遞長度編碼）
+  function automatic logic [31:0] enc_vdot(input logic [4:0] rd,
+                                           input logic [4:0] rs1,
+                                           input logic [4:0] len);  // len 2/4/8
+    return {2'b00, 12'(len), 5'(rs1), 3'(F3_VDOT), 5'(rd), 5'(OPC_CUSTOM0)};
   endfunction
 
 endpackage : oh1_pkg
