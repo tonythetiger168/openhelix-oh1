@@ -66,7 +66,7 @@ package oh1_pkg;
     return {f7, rs2, rs1, f3, rd, 7'b0110011};
   endfunction
 
-  function automatic logic [31:0] enc_itype(ikind_e k, logic [4:0] rd, rs1, logic [11:0] imm);
+  function automatic logic [31:0] enc_itype(ikind_e k, logic [4:0] rd, logic [4:0] rs1, logic [11:0] imm);
     logic [2:0] f3; logic [6:0] opc;
     case (k)
       I_ADDI : begin f3=3'b000; opc=7'b0010011; end
