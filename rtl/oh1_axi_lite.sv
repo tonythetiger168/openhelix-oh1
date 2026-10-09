@@ -157,21 +157,35 @@ module oh1_axi_lite #(
           end
         end
 
-        // ---- 讀通道 ----
+        // ---- 讀通道：先設位址 ----
         RD_ADDR: begin
           if (mem_rd_window) begin
-            rdata_o <= mem_rdata_i;
-          end else begin
-            case (rreg)
-              REG_CTRL:      rdata_o <= {30'b0, ctrl_irq_en, 1'b0};
-              REG_STATUS:    rdata_o <= {29'b0, status_busy, status_illegal, status_done};
-              REG_PROG_BASE: rdata_o <= prog_base;
-              REG_DATA_BASE: rdata_o <= data_base;
-              REG_PROG_LEN:  rdata_o <= prog_len;
-              default:       rdata_o <= '0;
-            endcase
+            mem_addr_o    <= raddr_q[27:0] >> 2;
+            mem_is_imem_o <= (raddr_q[31:28] == 4'h1);
           end
           axi_state <= RD_DATA;
+        end
+
+        // RD_DATA：組合讀取（mem_rdata 已是當前位址的資料）
+        RD_DATA: begin
+          if (!rvalid_o) begin
+            if (mem_rd_window) begin
+              rdata_o <= mem_rdata_i;   // mem_addr 已在 RD_ADDR 設好，此時穩定
+            end else begin
+              case (rreg)
+                REG_CTRL:      rdata_o <= {30'b0, ctrl_irq_en, 1'b0};
+                REG_STATUS:    rdata_o <= {29'b0, status_busy, status_illegal, status_done};
+                REG_PROG_BASE: rdata_o <= prog_base;
+                REG_DATA_BASE: rdata_o <= data_base;
+                REG_PROG_LEN:  rdata_o <= prog_len;
+                default:       rdata_o <= '0;
+              endcase
+            end
+            rvalid_o <= 1'b1;
+          end else if (rready_i) begin
+            rvalid_o  <= 1'b0;
+            axi_state <= IDLE;
+          end
         end
 
         RD_DATA: begin
