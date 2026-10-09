@@ -12,3 +12,13 @@ obj_dir/
 *.o
 *.log
 __pycache__/
+tools/yosys-0.65/
+tools/iverilog-13.0/
+tools/usr/
+tools/debs/
+tools/downloads/
+tools/build/
+tools/git_repo_*.tar.gz
+tools/vaxi*.out
+tools/vprobe.out
+*.bundle
