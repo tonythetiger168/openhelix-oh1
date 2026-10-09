@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get install -y verilator iverilog yosys
+
+      - name: Lint (verilator -Wall)
+        run: verilator --lint-only -sv -Wall rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv --top-module oh1_core
+
+      - name: Smoke test (12 checks)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_smoke.sv \
+            --top-module tb_smoke -Mdir obj_smoke -o Vtb_smoke
+          ./obj_smoke/Vtb_smoke
+
+      - name: SIMD engine test (14 per-lane checks)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_simd.sv \
+            --top-module tb_simd -Mdir obj_simd -o Vtb_simd
+          ./obj_simd/Vtb_simd
+
+      - name: CRV random vs golden ISS (3 seeds × 20 programs)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv \
+            --top-module tb_rand -Mdir obj_rand -o Vtb_rand
+          for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=20; done
+
+      - name: Yosys elaboration check
+        run: |
+          mkdir -p sim
+          yosys -p 'read_verilog -sv rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv; hierarchy -top oh1_core; proc; check'

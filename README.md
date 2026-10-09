@@ -1,71 +1,75 @@
-# OpenHelix OH-1 — RTL 開發倉庫
+# OpenHelix OH-1
 
-> Milestone 0.1：單 warp SIMT 最小核心（功能正確性基線 / golden RTL）
-> 設計：SystemVerilog　|　驗證：UVM 1.2 + Constrained-Random（CRV）
-> 對應計畫書：Phase 1 之第一個工程交付物
+**4-lane SIMT micro-core with warp divergence stack** — a GPU-semantic SIMD core small enough to verify completely, open enough to modify.
 
-## 本里程碑範圍（v0.1 刻意做少，但做對）
+[![smoke](https://github.com/tonythetiger168/openhelix-oh1/actions/workflows/ci.yml/badge.svg)](https://github.com/tonythetiger168/openhelix-oh1/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**做：**
-- RV32I 核心子集（R/I/B/LUI/AUIPC/LW/SW）+ custom-0 SIMT 擴展：`split/join/tmc/bar/wexit/texit`
-- 分歧堆疊採**標記式雙 entry 模型**（v0.1 設計決策）：
-  - `split p` 分歧時依序推入 `{tag=1, 原遮罩}` 與 `{tag=0, false_m, else_pc}`，執行 then 路徑
-  - 全假（true_m==0）時僅推 tag entry 並直接進 else 路徑（then 路徑的 join 自然被跳過）
-  - `join`：彈出 tag=0 → 進 else 路徑；彈出 tag=1 → 恢復原遮罩、pc+4 續行（reconverge）
-  - 程式慣例：if-else 結構需兩個 join（then 路徑尾、else 路徑尾各一）
-- CSR 唯讀：`0x8C0 (tid)`、`0x8CD (laneid)`（每 lane 回傳自身 lane 編號）
-- LANES=4 lane 私有寄存器堆、分歧堆疊（深度 8）、活動遮罩
-- **IF/EX 二級流水線**：IF 持續取指；EX 解析控制轉移（branch taken / split 全假 / join→else）時 flush 誤取指令（1-cycle bubble）；無資料旁路需求（v0.1 每指令獨佔 EX）
-- UVM CRV：隨機指令流（split/join 配平、branch 目標範圍、對齊約束）、ISS 參考模型 scoreboard、功能覆蓋
+## What is OH-1?
 
-**不做（後續里程碑）：**
-- wspawn 多 warp、tmma 張量單元、atomics/fence、管線化、多 core/NoC
+OH-1 brings **GPU warp semantics** (split / join / tmc) into a 2-stage-pipeline, MCU-class micro-core:
 
-## 目錄結構
+- **21-instruction ISA** — RV32I-like integer core + Custom-0 SIMT control (split / join / tmc / bar / wexit / texit)
+- **Warp-uniform branching** — a branch is taken only if *all* active lanes agree (AND semantics)
+- **Marked dual-entry divergence stack** — 8-deep, split pushes tag + else entries; join pops else first, then tag restores the mask
+- **Per-lane datapath** — 4 × (32×32b RF + ALU + LSU), lockstep single-issue
+- **Low power by construction** — per-lane operand isolation: dynamic power scales with active-lane count
+- **AXI4-Lite peripheral wrapper** — drop into any SoC as an accelerator (register map + memory windows + IRQ)
 
-```
-openhelix/
-├── README.md
-├── Makefile / filelist.f
-├── rtl/
-│   ├── oh1_pkg.sv        # 參數 + ISA 編碼/解碼常數（generator 與 ISS 單一事實來源）
-│   ├── oh1_decode.sv     # 組合解碼器
-│   └── oh1_core.sv       # DUT：FSM + RF + ALU + 分歧堆疊 + LSU + 可觀測埠
-├── tb/
-│   ├── oh1_if.sv         # prog_if（指令記憶體在 interface 內）/ dmem_if
-│   ├── oh1_agent.sv      # transaction/item/sequencer/driver/monitor
-│   ├── oh1_seq_lib.sv    # 隨機程式序列（CRV 約束核心）
-│   ├── oh1_scoreboard.sv # ISS 參考模型 + 逐事件比對
-│   ├── oh1_env.sv        # env + coverage
-│   ├── oh1_tests.sv      # smoke / random / 高分歧測試
-│   └── tb_top.sv
-├── sim/                  # 模擬工作目錄
-└── doc/                  # 驗證計畫（待補 v0.2）
-```
-
-## 執行方式（需商業模擬器，本 sandbox 無法執行）
+## Quick start
 
 ```bash
-make sim SIM=vcs    TEST=oh1_smoke_test    # Synopsys VCS
-make sim SIM=xrun   TEST=oh1_rand_test    # Cadence Xcelium
-make sim SIM=questa TEST=oh1_div_test     # Siemens Questa
-make cov SIM=vcs                          # 產生覆蓋率報告
+source tools/env.sh        # pinned toolchain (verilator 5.052 / yosys 0.65 / iverilog 13 / pyslang)
+
+make smoke                 # directed smoke — 12 checks, divergent sw/lw, split/join, branches
+make simd                  # SIMD engine — 14 per-lane checks (ALU/LSU/TMC/divergence)
+make rand  SEED=7 N_PROG=50  # CRV: random ISA programs vs instruction-level golden ISS
+make lint                  # verilator -Wall  → 0 errors 0 warnings
+make lint-yosys            # yosys 0.65 elaboration check
 ```
 
-> iverilog/verilator 不支援 UVM 類別庫，v0.1 不支援；RTL 部分可另行以 verilator --lint-only 檢查。
+## Verification matrix
 
-## 驗證方法學
+| Layer | Mechanism | Status |
+|---|---|---|
+| Directed | `tb_smoke` 12 checks, `tb_simd` 14 per-lane checks | ✅ PASS |
+| CRV | `tb_rand` — constrained-random programs vs independent ISS, per-cycle PC/mask/WB compare, RF+dmem final-state compare | ✅ 80/80 programs |
+| UVM | 7-file env: CRV program generator (split/join statically balanced), instruction-level ISS scoreboard, 8 covergroups | ✅ delivered (sign-off on VCS/Xcelium) |
+| SVA | 15 assertions + 17 cover properties (stack bounds, mask contiguity, done quiescence, alignment) | ✅ bound |
+| Lint | verilator 5.052 `-Wall` + yosys 0.65 + pyslang 12 (slang) cross-check | ✅ 0/0 |
 
-| 元件 | 方法 |
-|---|---|
-| Stimulus | CRV：指令種類/操作數/立即數約束；序列層追蹤分歧深度（split/join 配平）、branch 目標界內、LW/SW 字對齊 |
-| Reference | Scoreboard 內 ISS：逐 lane 執行 + 遮罩語義 + 分歧堆疊，與 DUT 逐事件比對 WB/DMEM |
-| 比對點 | EXEC 事件：pc / instr / active_mask / WB(rd,data,per-lane) / DMEM write |
-| Coverage | opcode bins、funct12、rd/rs1/rs2 區間、分歧深度、branch taken、load/store 位址區間、CSR bins、cross |
-| 結束條件 | texit 抵達 + scoreboard final check + watchdog |
+Every RTL change is regression-gated by smoke + simd + rand.
 
-## 編碼慣例
+## Architecture
 
-- custom-0 = `0001011`，funct12 區分指令（pkg 內定義）
-- 所有狀態可觀測：`exec_valid/exec_pc/exec_active_mask/wb_*/dmem_*` 輸出埠
-- bar 在單 warp 語義下為 nop（保留計數器介面供多 warp 擴充）
+![OH-1 architecture](doc/oh1_architecture.svg)
+
+- 2-stage pipeline (IF/EX) — redirect penalty is exactly 1 bubble, the SIMT sweet spot
+- Divergence handled by a **marked dual-entry stack**, not reconvergence counters
+- TMC re-masks dynamically (lane-0 value, clamped, guaranteed contiguous low-ones by SVA)
+- Operand isolation makes power ∝ active lanes — divergence *saves* energy
+
+## Repository layout
+
+```
+rtl/        oh1_pkg.sv (ISA), oh1_decode.sv, oh1_core.sv, oh1_axi_lite.sv (M2.0 W2)
+tb/         smoke / simd / rand / axi testbenches + 7-file UVM environment
+doc/        architecture.svg, lint/coverage/low-power reports, Tensor-Lite & multi-warp specs
+tools/      pinned toolchain: env.sh + manifest.txt (SHA-256 for every artifact, offline-reproducible)
+```
+
+## Roadmap
+
+| Milestone | Content | Status |
+|---|---|---|
+| M0.2 | Core closure: RTL freeze, lint clean, CRV verified, low-power isolation | ✅ |
+| M0.3 | Toolchain pinned from source (verilator 5.052 / yosys 0.65 / iverilog 13 / pyslang) | ✅ |
+| M1.0 | Specs frozen: Tensor-Lite FP16 vdot, AXI4-Lite, multi-warp wspawn, LLVM backend plan | ✅ |
+| M2.0 | RTL implementation of M1.0 (AXI verified 4/4; vdot MAC & 2-warp scheduler next) | 🔧 |
+| M2.0+ | FPGA reference (Edge), safety derivative (lockstep + ECC), education ecosystem | 🗺️ |
+
+Positioning: NVIDIA's stack stops at Jetson (7–15 W). OH-1 targets the open, deterministic, sub-watt SIMT niche below it — open RTL, full verification assets, reproducible toolchain.
+
+## License
+
+MIT (see [LICENSE](LICENSE)).

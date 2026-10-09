@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.19: https://docutils.sourceforge.io/" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>verilator_gantt &mdash; Verilator 5.006 documentation</title>
+      <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+      <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+      <link rel="stylesheet" href="_static/css/vlt_sphinx.css" type="text/css" />
+    <link rel="shortcut icon" href="_static/verilator_32x32_min.png"/>
+  
+        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+        <script src="_static/jquery.js"></script>
+        <script src="_static/underscore.js"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js"></script>
+        <script src="_static/doctools.js"></script>
+        <script src="_static/sphinx_highlight.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="copyright" title="Copyright" href="copyright.html" />
+    <link rel="next" title="verilator_profcfunc" href="exe_verilator_profcfunc.html" />
+    <link rel="prev" title="verilator_coverage" href="exe_verilator_coverage.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search"  style="background: #45acf8" >
+
+          
+          
+          <a href="index.html">
+            
+              <img src="_static/verilator_192_150_min.png" class="logo" alt="Logo"/>
+          </a>
+              <div class="version">
+                5.006
+              </div>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Overview</a></li>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">Examples</a></li>
+<li class="toctree-l1"><a class="reference internal" href="install.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="install-cmake.html">CMake Installation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">User's Guide</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="verilating.html">Verilating</a></li>
+<li class="toctree-l1"><a class="reference internal" href="connecting.html">Connecting to Verilated Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="simulating.html">Simulating (Verilated-Model Runtime)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing and Reporting Bugs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="faq.html">FAQ/Frequently Asked Questions</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference Guide</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="languages.html">Input Languages</a></li>
+<li class="toctree-l1"><a class="reference internal" href="extensions.html">Language Extensions</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="executables.html">Executable and Argument Reference</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="exe_verilator.html">verilator Arguments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="exe_verilator.html#configuration-files">Configuration Files</a></li>
+<li class="toctree-l2"><a class="reference internal" href="exe_verilator_coverage.html">verilator_coverage</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">verilator_gantt</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#gantt-chart-vcd">Gantt Chart VCD</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#gantt-chart-vcd-signals">Gantt Chart VCD Signals</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#verilator-gantt-arguments">verilator_gantt Arguments</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="exe_verilator_profcfunc.html">verilator_profcfunc</a></li>
+<li class="toctree-l2"><a class="reference internal" href="exe_sim.html">Simulation Runtime Arguments</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="warnings.html">Errors and Warnings</a></li>
+<li class="toctree-l1"><a class="reference internal" href="files.html">Files</a></li>
+<li class="toctree-l1"><a class="reference internal" href="environment.html">Environment</a></li>
+<li class="toctree-l1"><a class="reference internal" href="deprecations.html">Deprecations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="contributors.html">Contributors and Origins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="changes.html">Revision History</a></li>
+<li class="toctree-l1"><a class="reference internal" href="copyright.html">Copyright</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu"  style="background: #45acf8" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Verilator</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="executables.html">Executable and Argument Reference</a></li>
+      <li class="breadcrumb-item active">verilator_gantt</li>
+      <li class="wy-breadcrumbs-aside">
+              <a href="https://github.com/verilator/verilator/blob/master/docs/guide/exe_verilator_gantt.rst" class="fa fa-github"> Edit on GitHub</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="verilator-gantt">
+<h1>verilator_gantt<a class="headerlink" href="#verilator-gantt" title="Permalink to this heading">¶</a></h1>
+<p>Verilator_gantt creates a visual representation to help analyze Verilator
+multithreaded simulation performance by showing when each macro-task
+starts, ends, and when each thread is busy or idle.</p>
+<p>For an overview of the use of verilator_gantt, see <a class="reference internal" href="simulating.html#profiling"><span class="std std-ref">Code Profiling</span></a>.</p>
+<section id="gantt-chart-vcd">
+<h2>Gantt Chart VCD<a class="headerlink" href="#gantt-chart-vcd" title="Permalink to this heading">¶</a></h2>
+<p>Verilated_gantt creates a value change dump (VCD) format dump file which
+may be viewed in a waveform viewer (e.g., C&lt;GTKWave&gt;):</p>
+<figure class="align-default" id="id1">
+<img alt="_images/fig_gantt_min.png" src="_images/fig_gantt_min.png" />
+<figcaption>
+<p><span class="caption-number">Fig. 2 </span><span class="caption-text">Example verilator_gantt output, as viewed with GTKWave.</span><a class="headerlink" href="#id1" title="Permalink to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>The viewed waveform chart has time on the X-axis, with one unit for each
+time tick of the system’s high-performance counter.</p>
+</section>
+<section id="gantt-chart-vcd-signals">
+<h2>Gantt Chart VCD Signals<a class="headerlink" href="#gantt-chart-vcd-signals" title="Permalink to this heading">¶</a></h2>
+<p>In waveforms, there are the following signals. In GTKWave, use “decimal”
+data format to remove the leading zeros and make the traces easier to read.</p>
+<dl class="simple">
+<dt>evals</dt><dd><p>Increments each time when eval_step was measured to be active.  This
+allow visualization of how much time eval_step was active.</p>
+</dd>
+<dt>eval_loop</dt><dd><p>Increments each time when the evaluation loop within eval_step was
+measured to be active.  For best performance, there is only a single
+evaluation loop within each eval_step call; that is, the eval_loop
+waveform looks identical to the evals waveform.</p>
+</dd>
+<dt>measured_parallelism</dt><dd><p>The number of mtasks active at this time, for best performance, this will
+match the thread count. In GTKWave, use a data format of “analog step” to
+view this signal.</p>
+</dd>
+<dt>predicted_parallelism</dt><dd><p>The number of mtasks Verilator predicted would be active at this time,
+for best performance this will match the thread count. In GTKWave, use a
+data format of “analog step” to view this signal.</p>
+</dd>
+<dt>cpu#_thread</dt><dd><p>For the given CPU number, the thread number measured to be executing.</p>
+</dd>
+<dt>mtask#_cpu</dt><dd><p>For the given mtask id, the CPU it was measured to execute on.</p>
+</dd>
+<dt>thread#_mtask</dt><dd><p>For the given thread number, the mtask id it was executing.</p>
+</dd>
+<dt>predicted_thread#_mtask</dt><dd><p>For the given thread number, the mtask id Verilator predicted would be
+executing.</p>
+</dd>
+</dl>
+</section>
+<section id="verilator-gantt-arguments">
+<h2>verilator_gantt Arguments<a class="headerlink" href="#verilator-gantt-arguments" title="Permalink to this heading">¶</a></h2>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-verilator_gantt-arg-filename">
+<span id="cmdoption-verilator-gantt-arg-filename"></span><span class="sig-name descname"><span class="pre">&lt;filename&gt;</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-verilator_gantt-arg-filename" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>The filename to read data from; the default is “profile_exec.dat”.</p>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-verilator_gantt-help">
+<span id="cmdoption-verilator-gantt-help"></span><span class="sig-name descname"><span class="pre">--help</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-verilator_gantt-help" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>Displays a help summary, the program version, and exits.</p>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-verilator_gantt-no-vcd">
+<span id="cmdoption-verilator-gantt-no-vcd"></span><span class="sig-name descname"><span class="pre">--no-vcd</span></span><span class="sig-prename descclassname"></span><a class="headerlink" href="#cmdoption-verilator_gantt-no-vcd" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>Disables creating a .vcd file.</p>
+<dl class="std option">
+<dt class="sig sig-object std" id="cmdoption-verilator_gantt-vcd">
+<span id="cmdoption-verilator-gantt-vcd"></span><span class="sig-name descname"><span class="pre">--vcd</span></span><span class="sig-prename descclassname"> <span class="pre">&lt;filename&gt;</span></span><a class="headerlink" href="#cmdoption-verilator_gantt-vcd" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>Sets the output filename for vcd dump; the default is “verilator_gantt.vcd”.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="exe_verilator_coverage.html" class="btn btn-neutral float-left" title="verilator_coverage" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="exe_verilator_profcfunc.html" class="btn btn-neutral float-right" title="verilator_profcfunc" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; <a href="copyright.html">Copyright</a> 2023 by Wilson Snyder, under LGPL-3.0 or Artistic-2.0.</p>
+  </div>
+
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script>
+    <!-- Theme Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-D27B0C9QEB"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-D27B0C9QEB', {
+          'anonymize_ip': false,
+      });
+    </script> 
+
+</body>
+</html>
