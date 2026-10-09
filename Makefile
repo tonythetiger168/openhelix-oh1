@@ -77,6 +77,13 @@ $(SIMD_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_simd.sv | si
 rand: $(RAND_BIN)
 	$(RAND_BIN) +seed=$(or $(SEED),1) +n_prog=$(or $(N_PROG),20)
 
+# AXI4-Lite wrapper 驗證（W2）
+axi:
+	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+	  rtl/oh1_axi_lite.sv tb/tb_axi_smoke.sv \
+	  --top-module tb_axi_smoke -Mdir /dev/shm/obj_axi -o Vtb_axi
+	./sim/bin/Vtb_axi 2>/dev/null || cp /dev/shm/obj_axi/Vtb_axi sim/bin/ && ./sim/bin/Vtb_axi
+
 $(RAND_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv | sim/bin
 	rm -rf /dev/shm/obj_rand
 	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \

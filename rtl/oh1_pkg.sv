@@ -88,7 +88,7 @@ package oh1_pkg;
     return {imm, rs1, f3, rd, opc};
   endfunction
 
-  function automatic logic [31:0] enc_btype(ikind_e k, logic [4:0] rs1, rs2, logic [12:1] imm);
+  function automatic logic [31:0] enc_btype(ikind_e k, logic [4:0] rs1, logic [4:0] rs2, logic [12:1] imm);
     logic [2:0] f3;
     case (k)
       I_BEQ: f3=3'b000; I_BNE: f3=3'b001;
@@ -108,7 +108,7 @@ package oh1_pkg;
   endfunction
 
   // 註：參數型別用 logic[2:0] 而非 f3_e —— iverilog 不支援 enum 作為函數參數型別
-  function automatic logic [31:0] enc_custom3(logic [2:0] f3, logic [4:0] rs1, rs2);
+  function automatic logic [31:0] enc_custom3(logic [2:0] f3, logic [4:0] rs1, logic [4:0] rs2);
     return {7'd0, rs2, rs1, f3, 5'd0, OPC_CUSTOM0};
   endfunction
 
