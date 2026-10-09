@@ -79,13 +79,25 @@ module tb_axi_integration;
     .wb_valid_o(wb_valid), .wb_rd_o(wb_rd), .wb_lane_mask_o(wb_lane_mask),
     .wb_data_o(wb_data), .done_o(core_done), .illegal_o(core_illegal));
 
-  // Debug: 監控 AXI 寫入（定位資料錯誤）
-  int dbg_cnt = 0;
+  // start 脈衝觀察旗標（non-blocking，不干擾任何握手）
+  logic start_seen = 1'b0;
   always @(posedge clk) begin
-    if (mem_we && dbg_cnt < 5) begin
-      $display("[DBG] mem_we: is_imem=%b addr=%08x wdata=%08x", mem_is_imem, mem_addr, mem_wdata);
-      dbg_cnt++;
+    if (core_start) begin
+      start_seen <= 1'b1;
+      $display("[DBG] core_start RISE at t=%0t", $time);
     end
+  end
+
+  // Debug：core 執行觀測（三合一判死 monitor）
+  logic done_d = 1'b0;
+  int dbg_cyc = 0;
+  always @(posedge clk) begin
+    done_d <= core_done;
+    dbg_cyc++;
+    if (core.active_q && !core.done_q && dbg_cyc < 60)
+      $display("[DBG] ACTIVE exec pc=%08x mask=%04b vld=%b", exec_pc, exec_mask, exec_valid);
+    if (core_done && !done_d)
+      $display("[DBG] core_done RISE at t=%0t", $time);
   end
 
   // AXI BFM（與 tb_axi_smoke 相同，修正版）
@@ -169,19 +181,25 @@ module tb_axi_integration;
     axi_read(32'h1000_0038, rd);
     if (rd !== smoke_prog[14]) begin $display("[TB_AXI_INT] FAIL: imem[14] rd=%08x exp=%08x", rd, smoke_prog[14]); errors++; end
 
-    // Start
-    axi_write(32'h00, 32'h0000_0001);   // CTRL: start=1, irq_en=0
-
-    // 輪詢 STATUS 直到 done
-    begin : wait_done
-      repeat (200) begin
-        axi_read(32'h04, rd);
-        if (rd[0] === 1'b1) begin
-          $display("[TB_AXI_INT] core done detected");
-          disable wait_done;
-        end
+    // Start（non-blocking 觀察，不干擾握手）
+    begin
+      automatic logic saw_start = 0;
+      // 觀察區塊：每 posedge 檢查（獨立 always 不行在 task 內，用旗標+延後檢查）
+      axi_write(32'h00, 32'h0000_0001);   // CTRL: start=1, irq_en=0
+      saw_start = start_seen;
+      if (!saw_start) begin
+        $display("[TB_AXI_INT] FAIL: no core_start pulse"); errors++;
       end
-      if (rd[0] !== 1'b1) begin $display("[TB_AXI_INT] FAIL: timeout waiting done"); errors++; end
+    end
+
+    // 等 core 完成（wire 等待已證明 done 會升起），再驗 STATUS register 正確反映
+    wait (core_done === 1'b1);
+    $display("[TB_AXI_INT] core done (wire) at t=%0t", $time);
+    axi_read(32'h04, rd);
+    if (rd[0] !== 1'b1) begin
+      $display("[TB_AXI_INT] FAIL: STATUS done bit not set, rd=%08x", rd); errors++;
+    end else begin
+      $display("[TB_AXI_INT] STATUS done bit verified");
     end
 
     // 驗證核心結果（與 tb_smoke 相同期望值）

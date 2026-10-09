@@ -84,13 +84,22 @@ axi:
 	  --top-module tb_axi_smoke -Mdir /dev/shm/obj_axi -o Vtb_axi
 	./sim/bin/Vtb_axi 2>/dev/null || cp /dev/shm/obj_axi/Vtb_axi sim/bin/ && ./sim/bin/Vtb_axi
 
+# AXI + Core 整合驗證（W2 閉環：AXI 載入程式→start→執行→STATUS→結果驗證）
+axi-int:
+	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+	  rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv rtl/oh1_axi_lite.sv \
+	  tb/tb_axi_integration.sv \
+	  --top-module tb_axi_integration -Mdir /dev/shm/obj_axiint -o Vtb_axi_int
+	cp /dev/shm/obj_axiint/Vtb_axi_int sim/bin/ && rm -rf /dev/shm/obj_axiint
+	./sim/bin/Vtb_axi_int
+
 $(RAND_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv | sim/bin
-	rm -rf /dev/shm/obj_rand
+	rm -rf /tmp/obj_rand
 	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
 	  rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv \
-	  --top-module tb_rand -Mdir /dev/shm/obj_rand -o Vtb_rand
-	cp /dev/shm/obj_rand/Vtb_rand $@
-	rm -rf /dev/shm/obj_rand
+	  --top-module tb_rand -Mdir /tmp/obj_rand -o Vtb_rand
+	cp /tmp/obj_rand/Vtb_rand $@
+	rm -rf /tmp/obj_rand
 
 sim/bin:
 	mkdir -p sim/bin

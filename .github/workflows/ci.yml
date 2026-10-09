@@ -38,6 +38,14 @@ jobs:
             --top-module tb_rand -Mdir obj_rand -o Vtb_rand
           for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=20; done
 
+      - name: AXI4-Lite integration (AXI load → start → run → STATUS → verify)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv rtl/oh1_axi_lite.sv \
+            tb/tb_axi_integration.sv \
+            --top-module tb_axi_integration -Mdir obj_axiint -o Vtb_axi_int
+          ./obj_axiint/Vtb_axi_int
+
       - name: Yosys elaboration check
         run: |
           mkdir -p sim
