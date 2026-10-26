@@ -1,6 +1,6 @@
 # Edge NPU／CPU／OS／SKU 工作進度
 
-更新：2026-10-26 10:40（Asia/Taipei）。
+更新：2026-10-26 10:38（Asia/Taipei）。
 本工作獨立進度檔，依使用者指示不寫共用 PROGRESS_TV_STB_IPCAM.md。
 
 ## 來源基線
@@ -26,7 +26,8 @@
 - 抽樣10檔git blob SHA匹配；17項算力/頻寬算術檢查完成。
 - 環境未找到verilator/iverilog；本輪未執行RTL lint/regression。
 - CPU PR #1 的104/104等數字僅為PR既有報告，本輪未重跑。
-- 文檔QA與PR commit：見後續更新；不填造RTL PASS。
+- 文檔QA：9份Markdown行長/圍欄、2份JSON格式檢查完成。
+- GitHub compare：僅新增設計／進度／稽核證據，沒有RTL更動。
 
 ## 下一步
 
@@ -35,3 +36,16 @@
 再選固定模型/資料集跑CPU→quant→RTL。
 CPU/OS與DDR gate另列驗收，OH1無優勢即保留研究線。
 不自動合併、不付費、不直接改main、不跨聊天發訊息。
+
+## 設計提交與本檔版本
+
+本repo設計commit：`42d7672b801a828e0824b2e2b6143ac7163c78fb`。
+本檔的進度提交SHA由所在commit與PR head識別，避免自引用。
+
+## 跨 repo 審查連結
+
+- [SoC／來源合約 PR #9](https://github.com/tonythetiger168/orca-v63/pull/9)
+- [NPU 架構 PR #1](https://github.com/tonythetiger168/orca-ai-accelerators/pull/1)
+- [OH1 評估 PR #1](https://github.com/tonythetiger168/openhelix-oh1/pull/1)
+
+這些均為 draft；設計尚未合併，不表示consumer已同意。

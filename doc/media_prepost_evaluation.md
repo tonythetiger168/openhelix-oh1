@@ -139,3 +139,11 @@ raw coverage、seed、waiver、mutation結果隨報告保存。
 QoS 無 deadline違反，新增面積/功耗與軟體成本被 SKU owner 接受。
 比較門檻在測試前凍結；沒有優勢就保留研究線，
 U-CAM/U-OTT/U-TV均可不含OH1，不阻塞首代。
+
+## 跨 repo 審查連結
+
+- [SoC／來源合約 PR #9](https://github.com/tonythetiger168/orca-v63/pull/9)
+- [NPU 架構 PR #1](https://github.com/tonythetiger168/orca-ai-accelerators/pull/1)
+- [OH1 評估 PR #1](https://github.com/tonythetiger168/openhelix-oh1/pull/1)
+
+這些均為 draft；設計尚未合併，不表示consumer已同意。
