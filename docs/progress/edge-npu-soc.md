@@ -1,7 +1,31 @@
 # Edge NPU／CPU／OS／SKU 工作進度
 
-更新：2026-10-26 10:38（Asia/Taipei）。
+更新：2026-11-01 05:09（Asia/Taipei）。
 本工作獨立進度檔，依使用者指示不寫共用 PROGRESS_TV_STB_IPCAM.md。
+
+## 2026-11-01 本次跟進
+
+三個設計PR仍draft、尚無審查留言，三個main未變；
+CPU PR #1新head為`c1db39aa2ba58d7be23be66912d9051042369c60`。
+相對前次CPU head新增21個commits（含merge），已盤點APB/NPU/SoC來源。
+
+- design：新增backend候選與CSR／命令／完成／地址／counter相容性決策。
+- reference：獨立repo新增INT8 GEMM／INT32 rescale host golden。
+- verified：Python3.14.8，12個unittest通過；4635個精確rounding比較點。
+- RTL：本工作未改RTL；CPU PR作者的regression/coverage未重跑。
+- physical／模型／OS：未做，沒有新增性能或量產主張。
+- 阻塞：G1尚未同意；PR內SoC NPU外部DMA grant接0；
+  CPU/APB/DDR/firewall/abort與OH1 wrapper仍需獨立驗收。
+- 下一步：先評估X1-Nano重用與64B packing，再接RTL scoreboard；
+  本輪golden沒有command generator、driver或DMA功能。
+- 本repo更新前head：`02f4885b05a8665905955b7dd426a0f1e1057eb6`。
+- 本次更新commit由本檔所在commit/PR head識別。
+
+詳情與證據：
+- [總repo跟進PR](https://github.com/tonythetiger168/orca-v63/pull/9)
+- [host reference PR](https://github.com/tonythetiger168/orca-ai-accelerators/pull/1)
+
+以下2026-10-26條目保留為歷史紀錄，本次狀態以上方日期段落為準。
 
 ## 來源基線
 - orca-v63: `3d66ab0c9b16a4a35907d7729cafe3abebec379a`
