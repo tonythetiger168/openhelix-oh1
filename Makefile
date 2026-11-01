@@ -23,7 +23,7 @@ VCS_OPTS += -cm line+tgl+fsm+cond+assert
 SIMV_COV := -cm line+tgl+fsm+cond+assert -cm_name $(TEST)_$(SEED)
 endif
 
-.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk isa regress regress-sync
+.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk isa regress regress-sync uvm uvm-signoff
 
 # ---- 開源工具鏈（使用者空間，見 tools/manifest.txt）----
 # 使用: source tools/env.sh 後 make lint
@@ -141,6 +141,14 @@ $(RAND_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv | si
 
 sim/bin:
 	mkdir -p sim/bin
+
+# ---- pyuvm + cocotb CRV environment with coverage (see verif/README.md) ----
+# one-time: pip install -r verif/requirements.txt && source verif/tools/setup_verilator.sh
+uvm:
+	python3 verif/run.py --seeds 1 2 3 4 --n 40
+
+uvm-signoff:
+	python3 verif/run.py --seeds 1 2 3 4 5 6 7 8 --n 40 --gate
 
 sim:
 	@mkdir -p $(RUN_DIR)

@@ -22,3 +22,5 @@ tools/git_repo_*.tar.gz
 tools/vaxi*.out
 tools/vprobe.out
 *.bundle
+verif/out/
+verif/.tools/

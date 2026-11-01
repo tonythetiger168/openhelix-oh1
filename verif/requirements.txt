@@ -1,0 +1,8 @@
+# OH-1 pyuvm verification environment (pinned; see verif/README.md)
+cocotb==2.1.0
+pyuvm==5.0.0
+cocotb-coverage==2.0
+pyslang==12.1.0
+PyYAML==6.0.3
+# Verilator 5.049 dev build packaged on PyPI (repaired by verif/tools/setup_verilator.sh)
+verilator==5.48.0

@@ -101,3 +101,38 @@ jobs:
           yosys -p 'read_verilog sim/oh1_core.v; hierarchy -check -top oh1_core; proc; check -assert'
           sv2v rtl/oh1_axi_lite.sv > sim/oh1_axi_lite.v
           yosys -p 'read_verilog sim/oh1_axi_lite.v; hierarchy -check -top oh1_axi_lite; proc; check -assert'
+
+  uvm-coverage:
+    # pyuvm + cocotb constrained-random regression with coverage sign-off gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install verification tools
+        run: |
+          python -m pip install -r verif/requirements.txt
+          source verif/tools/setup_verilator.sh
+          echo "VERILATOR_ROOT=$VERILATOR_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$(command -v verilator)")" >> "$GITHUB_PATH"
+
+      - name: pyslang elaboration + assertion inventory
+        run: python verif/scripts/sv_check.py
+
+      - name: CRV regression (8 seeds x 6 tests x SYNC_MEM 0/1) + coverage gate
+        run: python verif/run.py --seeds 1 2 3 4 5 6 7 8 --n 40 --gate
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oh1-coverage
+          path: |
+            verif/out/report.md
+            verif/out/summary.json
+            verif/out/merged_coverage.dat
+            verif/out/sv_inventory.json
+            verif/out/seed_*/results.xml
