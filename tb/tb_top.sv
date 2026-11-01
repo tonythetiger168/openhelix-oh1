@@ -217,6 +217,7 @@ module tb_top;
     .dmem_raddr_o   (vif.dmem_raddr),
     .dmem_rdata_i   (vif.dmem_rdata),
     .dmem_wen_o     (vif.dmem_wen),
+    .dmem_wmask_o   (vif.dmem_wmask),
     .dmem_waddr_o   (vif.dmem_waddr),
     .dmem_wdata_o   (vif.dmem_wdata),
     .exec_valid_o   (vif.exec_valid),
@@ -227,7 +228,8 @@ module tb_top;
     .wb_lane_mask_o (vif.wb_lane_mask),
     .wb_data_o      (vif.wb_data),
     .done_o         (vif.done),
-    .illegal_o      (vif.illegal)
+    .illegal_o      (vif.illegal),
+    .stk_ovf_o      ()
   );
 
   bind oh1_core oh1_sva u_sva();

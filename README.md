@@ -3,7 +3,7 @@
 **4-lane SIMT micro-core with warp divergence stack** — a GPU-semantic SIMD core small enough to verify completely, open enough to modify.
 
 [![smoke](https://github.com/tonythetiger168/openhelix-oh1/actions/workflows/ci.yml/badge.svg)](https://github.com/tonythetiger168/openhelix-oh1/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ## What is OH-1?
 
@@ -14,7 +14,8 @@ OH-1 brings **GPU warp semantics** (split / join / tmc) into a 2-stage-pipeline,
 - **Marked dual-entry divergence stack** — 8-deep, split pushes tag + else entries; join pops else first, then tag restores the mask
 - **Per-lane datapath** — 4 × (32×32b RF + ALU + LSU), lockstep single-issue
 - **Low power by construction** — per-lane operand isolation: dynamic power scales with active-lane count
-- **AXI4-Lite peripheral wrapper** — drop into any SoC as an accelerator (register map + memory windows + IRQ)
+- **AXI4-Lite peripheral wrapper** — independent AW/W, WSTRB, SLVERR/DECERR, VERSION/CAP, W1C IRQ, relaunch without reset ([register map](doc/axi_lite_regmap.md))
+- **Per-lane store strobe** — `dmem_wmask_o`: masked-off lanes never write memory
 
 ## Quick start
 
@@ -24,7 +25,11 @@ source tools/env.sh        # pinned toolchain (verilator 5.052 / yosys 0.65 / iv
 make smoke                 # directed smoke — 12 checks, divergent sw/lw, split/join, branches
 make simd                  # SIMD engine — 14 per-lane checks (ALU/LSU/TMC/divergence)
 make rand  SEED=7 N_PROG=50  # CRV: random ISA programs vs instruction-level golden ISS
-make lint                  # verilator -Wall  → 0 errors 0 warnings
+make axi                   # AXI4-Lite protocol: AW/W ordering, backpressure, WSTRB, errors, IRQ W1C
+make axi-int               # AXI + core: load, start, relaunch, divergent store, IRQ
+make stk                   # divergence-stack overflow flag + relaunch
+make regress               # everything above, same set as CI
+make lint                  # verilator -Wall (core + AXI wrapper) → 0 errors 0 warnings
 make lint-yosys            # yosys 0.65 elaboration check
 ```
 
@@ -33,7 +38,8 @@ make lint-yosys            # yosys 0.65 elaboration check
 | Layer | Mechanism | Status |
 |---|---|---|
 | Directed | `tb_smoke` 12 checks, `tb_simd` 14 per-lane checks | ✅ PASS |
-| CRV | `tb_rand` — constrained-random programs vs independent ISS, per-cycle PC/mask/WB compare, RF+dmem final-state compare | ✅ 80/80 programs |
+| CRV | `tb_rand` — constrained-random programs vs independent ISS, per-cycle PC/mask/WB compare, RF+dmem final-state compare | ✅ 3 seeds × 50 programs in CI |
+| AXI | `tb_axi_smoke` protocol (sync-read memory, random B/R backpressure), `tb_axi_integration` with the real core, `tb_stk_ovf` | ✅ PASS |
 | UVM | 7-file env: CRV program generator (split/join statically balanced), instruction-level ISS scoreboard, 8 covergroups | ✅ delivered (sign-off on VCS/Xcelium) |
 | SVA | 15 assertions + 17 cover properties (stack bounds, mask contiguity, done quiescence, alignment) | ✅ bound |
 | Lint | verilator 5.052 `-Wall` + yosys 0.65 + pyslang 12 (slang) cross-check | ✅ 0/0 |
@@ -72,4 +78,4 @@ Positioning: NVIDIA's stack stops at Jetson (7–15 W). OH-1 targets the open, d
 
 ## License
 
-MIT (see [LICENSE](LICENSE)).
+Apache License 2.0 (see [LICENSE](LICENSE)).

@@ -26,10 +26,13 @@ module tb_axi_integration;
   logic        core_done, core_illegal;
   logic        irq;
   logic        mem_we; logic mem_is_imem; logic [31:0] mem_addr, mem_wdata, mem_rdata;
+  logic [3:0]  mem_wstrb;
+  logic        core_stk_ovf;
 
   // Core native memory interface
   logic [31:0] imem_addr, imem_rdata;
   logic        dmem_ren, dmem_wen;
+  oh1_pkg::lane_mask_t dmem_wmask;   // per-lane store strobe
   logic [31:0] dmem_raddr [LANES], dmem_rdata [LANES];
   logic [31:0] dmem_waddr [LANES], dmem_wdata [LANES];
   logic        exec_valid; logic [31:0] exec_pc; lane_mask_t exec_mask, wb_lane_mask;
@@ -46,11 +49,14 @@ module tb_axi_integration;
   always_ff @(posedge clk) begin
     if (dmem_wen)
       for (int l = 0; l < LANES; l++)
-        dmem[dmem_waddr[l][13:2] & 32'hFFF] <= dmem_wdata[l];
+        if (dmem_wmask[l]) dmem[dmem_waddr[l][13:2] & 32'hFFF] <= dmem_wdata[l];
     // AXI backdoor 寫入（mem_addr 已是 word index，與 core 的 [31:2] 一致）
     if (mem_we) begin
-      if (mem_is_imem) pmem[mem_addr & 32'hFFF] <= mem_wdata;
-      else             dmem[mem_addr & 32'hFFF] <= mem_wdata;
+      for (int b = 0; b < 4; b++)
+        if (mem_wstrb[b]) begin
+          if (mem_is_imem) pmem[mem_addr & 32'hFFF][b*8 +: 8] <= mem_wdata[b*8 +: 8];
+          else             dmem[mem_addr & 32'hFFF][b*8 +: 8] <= mem_wdata[b*8 +: 8];
+        end
     end
   end
   assign mem_rdata = mem_is_imem ? pmem[mem_addr & 32'hFFF] : dmem[mem_addr & 32'hFFF];
@@ -64,9 +70,9 @@ module tb_axi_integration;
     .araddr_i(araddr), .arvalid_i(arvalid), .arready_o(arready),
     .rdata_o(rdata), .rresp_o(rresp), .rvalid_o(rvalid), .rready_i(rready),
     .core_start_o(core_start), .core_start_pc_o(core_start_pc),
-    .core_done_i(core_done), .core_illegal_i(core_illegal),
+    .core_done_i(core_done), .core_illegal_i(core_illegal), .core_stk_ovf_i(core_stk_ovf),
     .irq_o(irq),
-    .mem_we_o(mem_we), .mem_is_imem_o(mem_is_imem),
+    .mem_we_o(mem_we), .mem_wstrb_o(mem_wstrb), .mem_is_imem_o(mem_is_imem),
     .mem_addr_o(mem_addr), .mem_wdata_o(mem_wdata), .mem_rdata_i(mem_rdata));
 
   oh1_core #(.LANES_P(LANES)) core (
@@ -74,10 +80,10 @@ module tb_axi_integration;
     .start_i(core_start), .start_pc_i(core_start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),
     .dmem_ren_o(dmem_ren), .dmem_raddr_o(dmem_raddr), .dmem_rdata_i(dmem_rdata),
-    .dmem_wen_o(dmem_wen), .dmem_waddr_o(dmem_waddr), .dmem_wdata_o(dmem_wdata),
+    .dmem_wen_o(dmem_wen), .dmem_wmask_o(dmem_wmask), .dmem_waddr_o(dmem_waddr), .dmem_wdata_o(dmem_wdata),
     .exec_valid_o(exec_valid), .exec_pc_o(exec_pc), .exec_mask_o(exec_mask),
     .wb_valid_o(wb_valid), .wb_rd_o(wb_rd), .wb_lane_mask_o(wb_lane_mask),
-    .wb_data_o(wb_data), .done_o(core_done), .illegal_o(core_illegal));
+    .wb_data_o(wb_data), .done_o(core_done), .illegal_o(core_illegal), .stk_ovf_o(core_stk_ovf));
 
   // start 脈衝觀察旗標（non-blocking，不干擾任何握手）
   logic start_seen = 1'b0;
@@ -153,6 +159,21 @@ module tb_axi_integration;
     smoke_prog[14] = enc_custom3(F3_TEXIT, 5'd0, 5'd0);
   endfunction
 
+  // Divergent-store program: lane 0 stores 0x55 at byte 128, lanes 1..3 masked off
+  logic [31:0] div_prog [10];
+  function automatic void load_div_store();
+    div_prog[0] = enc_itype(I_CSRR,  5'd1, 5'd0, CSR_TID);   // x1 = tid
+    div_prog[1] = enc_itype(I_SLTIU, 5'd8, 5'd1, 12'd1);     // x8 = (tid == 0)
+    div_prog[2] = enc_itype(I_SLLI,  5'd6, 5'd1, 12'd2);     // x6 = tid*4
+    div_prog[3] = enc_itype(I_ADDI,  5'd7, 5'd0, 12'h55);    // x7 = 0x55
+    div_prog[4] = enc_split(5'd8, 12'd6);                     // else at +12 bytes (idx 7)
+    div_prog[5] = enc_sw(5'd7, 5'd6, 12'd128);                // then: sw x7, 128(x6)
+    div_prog[6] = enc_custom3(F3_JOIN, 5'd0, 5'd0);
+    div_prog[7] = enc_itype(I_ADDI,  5'd0, 5'd0, 12'd0);      // else: nop
+    div_prog[8] = enc_custom3(F3_JOIN, 5'd0, 5'd0);
+    div_prog[9] = enc_custom3(F3_TEXIT, 5'd0, 5'd0);
+  endfunction
+
   int errors = 0;
   logic [31:0] rd;
 
@@ -214,13 +235,43 @@ module tb_axi_integration;
       end
     end
 
+    // ================= Run 2: relaunch without reset ==================
+    // Divergent store: only lane 0 is active inside the split, so only
+    // dmem[32] may change. Before the store-mask fix lanes 1..3 also wrote.
+    load_div_store();
+    for (int i = 0; i < 10; i++) axi_write(32'h1000_0100 + i*4, div_prog[i]);   // imem word 64
+    for (int l = 0; l < LANES; l++) axi_write(32'h2000_0080 + l*4, 32'hA5A5_0000 + l);
+    axi_write(32'h08, 32'h0000_0100);           // PROG_BASE = byte 0x100
+    axi_write(32'h14, 32'h0000_0003);           // clear events left over from run 1
+    axi_write(32'h00, 32'h0000_0003);           // start + irq_en
+    axi_read(32'h04, rd);
+    if (rd[2] !== 1'b1) begin $display("[TB_AXI_INT] FAIL: STATUS.busy not set after start, rd=%08x", rd); errors++; end
+    wait (irq === 1'b1);
+    $display("[TB_AXI_INT] run 2 IRQ at t=%0t", $time);
+    axi_read(32'h04, rd);
+    if (rd[2:0] !== 3'b001) begin $display("[TB_AXI_INT] FAIL: STATUS after run 2 = %08x", rd); errors++; end
+    axi_read(32'h14, rd);
+    if (rd[1:0] !== 2'b01) begin $display("[TB_AXI_INT] FAIL: IRQ_STAT=%08x exp done event", rd); errors++; end
+    axi_write(32'h14, 32'h0000_0001);           // W1C
+    @(posedge clk); #1;
+    if (irq !== 1'b0) begin $display("[TB_AXI_INT] FAIL: IRQ still high after W1C"); errors++; end
+    axi_read(32'h2000_0080, rd);
+    if (rd !== 32'h0000_0055) begin $display("[TB_AXI_INT] FAIL: lane0 store dmem[32]=%08x", rd); errors++; end
+    for (int l = 1; l < LANES; l++) begin
+      axi_read(32'h2000_0080 + l*4, rd);
+      if (rd !== 32'hA5A5_0000 + l) begin
+        $display("[TB_AXI_INT] FAIL: inactive lane %0d stored, dmem[%0d]=%08x", l, 32+l, rd); errors++;
+      end
+    end
+    if (errors == 0) $display("[TB_AXI_INT] relaunch + divergent store + IRQ W1C verified");
+
     if (errors == 0) $display("[TB_AXI_INT] PASS: AXI + core integration verified");
     else             $fatal(1, "[TB_AXI_INT] FAIL: %0d errors", errors);
     $finish;
   end
 
   initial begin
-    #50000;
+    #200000;
     $fatal(1, "[TB_AXI_INT] watchdog timeout");
   end
 

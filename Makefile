@@ -23,7 +23,7 @@ VCS_OPTS += -cm line+tgl+fsm+cond+assert
 SIMV_COV := -cm line+tgl+fsm+cond+assert -cm_name $(TEST)_$(SEED)
 endif
 
-.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean
+.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk regress
 
 # ---- 開源工具鏈（使用者空間，見 tools/manifest.txt）----
 # 使用: source tools/env.sh 後 make lint
@@ -31,6 +31,7 @@ lint: lint-verilator lint-yosys
 
 lint-verilator:
 	verilator --lint-only -sv -Wall rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv --top-module oh1_core
+	verilator --lint-only -sv -Wall rtl/oh1_axi_lite.sv --top-module oh1_axi_lite
 
 lint-yosys:
 	yosys -p "read_verilog -sv rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv; hierarchy -top oh1_core; proc; check" -l sim/yosys.log
@@ -77,21 +78,39 @@ $(SIMD_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_simd.sv | si
 rand: $(RAND_BIN)
 	$(RAND_BIN) +seed=$(or $(SEED),1) +n_prog=$(or $(N_PROG),20)
 
-# AXI4-Lite wrapper 驗證（W2）
-axi:
+# AXI4-Lite wrapper protocol test (AW/W ordering, backpressure, WSTRB, SLVERR/DECERR, IRQ W1C)
+axi: | sim/bin
+	rm -rf /dev/shm/obj_axi
 	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
 	  rtl/oh1_axi_lite.sv tb/tb_axi_smoke.sv \
 	  --top-module tb_axi_smoke -Mdir /dev/shm/obj_axi -o Vtb_axi
-	./sim/bin/Vtb_axi 2>/dev/null || cp /dev/shm/obj_axi/Vtb_axi sim/bin/ && ./sim/bin/Vtb_axi
+	cp /dev/shm/obj_axi/Vtb_axi sim/bin/ && rm -rf /dev/shm/obj_axi
+	./sim/bin/Vtb_axi
 
-# AXI + Core 整合驗證（W2 閉環：AXI 載入程式→start→執行→STATUS→結果驗證）
-axi-int:
+# AXI + core integration (load over AXI, start, STATUS, relaunch, divergent store, IRQ W1C)
+axi-int: | sim/bin
+	rm -rf /dev/shm/obj_axiint
 	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
 	  rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv rtl/oh1_axi_lite.sv \
 	  tb/tb_axi_integration.sv \
 	  --top-module tb_axi_integration -Mdir /dev/shm/obj_axiint -o Vtb_axi_int
 	cp /dev/shm/obj_axiint/Vtb_axi_int sim/bin/ && rm -rf /dev/shm/obj_axiint
 	./sim/bin/Vtb_axi_int
+
+# Divergence-stack overflow flag + core relaunch
+stk: | sim/bin
+	rm -rf /dev/shm/obj_stk
+	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+	  rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_stk_ovf.sv \
+	  --top-module tb_stk_ovf -Mdir /dev/shm/obj_stk -o Vtb_stk
+	cp /dev/shm/obj_stk/Vtb_stk sim/bin/ && rm -rf /dev/shm/obj_stk
+	./sim/bin/Vtb_stk
+
+# Full open-source regression (same set as CI)
+regress: lint smoke simd axi axi-int stk
+	$(MAKE) rand SEED=1 N_PROG=50
+	$(MAKE) rand SEED=7 N_PROG=50
+	$(MAKE) rand SEED=42 N_PROG=50
 
 $(RAND_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv | sim/bin
 	rm -rf /tmp/obj_rand

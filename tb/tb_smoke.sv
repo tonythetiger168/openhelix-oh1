@@ -23,6 +23,7 @@ module tb_smoke;
   logic [31:0] dmem_raddr [N], dmem_rdata [N];
   logic [31:0] dmem_waddr [N], dmem_wdata [N];
   logic dmem_ren, dmem_wen;
+  oh1_pkg::lane_mask_t dmem_wmask;   // per-lane store strobe
   logic exec_valid;
   logic [31:0] exec_pc;
   lane_mask_t exec_mask, wb_lane_mask;
@@ -36,10 +37,10 @@ module tb_smoke;
     .clk_i(clk), .rst_ni(rst_n), .start_i(start), .start_pc_i(start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),
     .dmem_ren_o(dmem_ren), .dmem_raddr_o(dmem_raddr), .dmem_rdata_i(dmem_rdata),
-    .dmem_wen_o(dmem_wen), .dmem_waddr_o(dmem_waddr), .dmem_wdata_o(dmem_wdata),
+    .dmem_wen_o(dmem_wen), .dmem_wmask_o(dmem_wmask), .dmem_waddr_o(dmem_waddr), .dmem_wdata_o(dmem_wdata),
     .exec_valid_o(exec_valid), .exec_pc_o(exec_pc), .exec_mask_o(exec_mask),
     .wb_valid_o(wb_valid), .wb_rd_o(wb_rd), .wb_lane_mask_o(wb_lane_mask),
-    .wb_data_o(wb_data), .done_o(done), .illegal_o(illegal)
+    .wb_data_o(wb_data), .done_o(done), .illegal_o(illegal), .stk_ovf_o()
   );
 
   // ---- 指令記憶體（comb）----
@@ -57,7 +58,7 @@ module tb_smoke;
   always_ff @(posedge clk) begin
     if (dmem_wen) begin
       for (int l = 0; l < N; l++)
-        dmem[dmem_waddr[l][13:2]] <= dmem_wdata[l];
+        if (dmem_wmask[l]) dmem[dmem_waddr[l][13:2]] <= dmem_wdata[l];
     end
   end
 

@@ -161,9 +161,9 @@ class oh1_scoreboard extends uvm_component;
       end
 
       I_SW: begin
-        // 注意：DUT/TB 對「所有 lane」（含 inactive）依 l=0..3 順序寫入，後者覆蓋
+        // Only active lanes store (SIMT semantics); same-address conflicts: higher lane wins
         for (int l = 0; l < LANES; l++)
-          iss_dmem[((a[l] + imm) >> 2) & 32'hFFF] = b[l];
+          if (iss_act[l]) iss_dmem[((a[l] + imm) >> 2) & 32'hFFF] = b[l];
       end
 
       I_BEQ, I_BNE, I_BLT, I_BGE: begin

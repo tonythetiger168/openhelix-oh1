@@ -24,6 +24,7 @@ module oh1_core import oh1_pkg::*; #(
   output logic [31:0]               dmem_raddr_o  [LANES_P],
   input  logic [31:0]               dmem_rdata_i  [LANES_P],
   output logic                      dmem_wen_o,
+  output lane_mask_t                dmem_wmask_o,   // per-lane store strobe (active lanes only)
   output logic [31:0]               dmem_waddr_o  [LANES_P],
   output logic [31:0]               dmem_wdata_o  [LANES_P],
 
@@ -35,7 +36,8 @@ module oh1_core import oh1_pkg::*; #(
   output lane_mask_t                wb_lane_mask_o,
   output logic [31:0]               wb_data_o     [LANES_P],
   output logic                      done_o,
-  output logic                      illegal_o
+  output logic                      illegal_o,
+  output logic                      stk_ovf_o       // sticky: divergence stack overflow (push dropped)
 );
 
   // ===========================================================================
@@ -73,7 +75,7 @@ module oh1_core import oh1_pkg::*; #(
   logic [2:0]     sptr_w;
   assign sptr_w = stk_ptr_q[2:0];
 
-  logic        done_q, ill_q;
+  logic        done_q, ill_q, ovf_q;
 
   // ===========================================================================
   // Per-lane 組合邏輯（genvar：每 lane 獨立區塊，無變數索引）
@@ -171,6 +173,10 @@ module oh1_core import oh1_pkg::*; #(
   logic        redirect_en_c;
   logic [31:0] redirect_pc_c;
   int unsigned tmc_n;
+  logic        ex_live_c;     // EX holds a real instruction (not a bubble / post-done)
+  logic        stk_full_c;    // push would exceed STK_P entries
+  assign ex_live_c  = ex_vld_q && !done_q;
+  assign stk_full_c = push_two_c ? (32'(stk_ptr_q) + 2 > STK_P) : (32'(stk_ptr_q) + 1 > STK_P);
 
   always_comb begin
     next_act_c     = act_mask_q;
@@ -186,6 +192,7 @@ module oh1_core import oh1_pkg::*; #(
     tmc_n          = LANES_P;
     dmem_ren_o     = 1'b0;
     dmem_wen_o     = 1'b0;
+    dmem_wmask_o   = '0;
 
     unique case (kind)
       I_ADD, I_SUB, I_AND, I_OR, I_XOR, I_SLL, I_SRL, I_SRA, I_SLT, I_SLTU,
@@ -195,11 +202,15 @@ module oh1_core import oh1_pkg::*; #(
         wb_lane_mask_c = act_mask_q;
       end
       I_LW: begin
-        dmem_ren_o     = 1'b1;
+        dmem_ren_o     = ex_live_c;
         wb_en_c        = 1'b1;
         wb_lane_mask_c = act_mask_q;
       end
-      I_SW: dmem_wen_o = 1'b1;
+      I_SW: begin
+        // Masked-off lanes must not store (SIMT semantics); only issue in a live EX slot
+        dmem_wen_o   = ex_live_c && (act_mask_q != '0);
+        dmem_wmask_o = ex_live_c ? act_mask_q : '0;
+      end
       // ---- 分支：active lanes 全部滿足才跳（warp-uniform AND）----
       I_BEQ, I_BNE, I_BLT, I_BGE: begin
         if ((act_mask_q & ~cond_vec) == '0) begin
@@ -254,18 +265,23 @@ module oh1_core import oh1_pkg::*; #(
       stk_ptr_q  <= '0;
       done_q     <= 1'b0;
       ill_q      <= 1'b0;
+      ovf_q      <= 1'b0;
       for (int l = 0; l < LANES_P; l++)
         for (int r = 0; r < 32; r++) rf_q[l][r] <= 32'b0;
     end else begin
       // ---- IF stage ----
-      if (!active_q) begin
-        if (start_i) begin
-          active_q   <= 1'b1;
-          if_pc_q    <= start_pc_i;
-          ex_vld_q   <= 1'b0;
-          act_mask_q <= lane_mask_t'({LANES_P{1'b1}});
-          stk_ptr_q  <= '0;
-        end
+      if (start_i && (!active_q || done_q)) begin
+        // Launch (or relaunch after wexit/texit): RF contents are kept, control state is reset
+        active_q   <= 1'b1;
+        if_pc_q    <= start_pc_i;
+        ex_vld_q   <= 1'b0;
+        act_mask_q <= lane_mask_t'({LANES_P{1'b1}});
+        stk_ptr_q  <= '0;
+        done_q     <= 1'b0;
+        ill_q      <= 1'b0;
+        ovf_q      <= 1'b0;
+      end else if (!active_q) begin
+        // idle: wait for start
       end else if (done_q) begin
         ex_vld_q <= 1'b0;
       end else if (redirect_en_c && ex_vld_q) begin
@@ -286,7 +302,9 @@ module oh1_core import oh1_pkg::*; #(
           for (int l = 0; l < LANES_P; l++)
             if (wb_lane_mask_c[l]) rf_q[l][rd_d] <= wb_data_c[l];
         end
-        if (push_en_c) begin
+        if (push_en_c && stk_full_c) begin
+          ovf_q <= 1'b1;                         // drop the push, flag a sticky fault
+        end else if (push_en_c) begin
           stk_tag_q [sptr_w]      <= 1'b1;
           stk_mask_q[sptr_w]      <= act_mask_q;
           stk_pc_q  [sptr_w]      <= 32'b0;
@@ -316,6 +334,7 @@ module oh1_core import oh1_pkg::*; #(
   assign wb_lane_mask_o = wb_lane_mask_c;
   assign done_o         = done_q;
   assign illegal_o      = ill_q;
+  assign stk_ovf_o      = ovf_q;
 
   for (genvar g = 0; g < LANES_P; g++) begin : gen_wb_data
     assign wb_data_o[g] = wb_data_c[g];
