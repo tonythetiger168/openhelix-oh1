@@ -161,4 +161,3 @@ module tb_simd;
   end
 
 endmodule
-
