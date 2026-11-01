@@ -12,7 +12,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: sudo apt-get install -y verilator iverilog yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator iverilog yosys curl unzip
+          curl --fail --location --retry 3 -o /tmp/sv2v.zip \
+            https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip
+          echo '552799a1d76cd177b9b4cc63a3e77823a3d2a6eb4ec006569288abeff28e1ff8  /tmp/sv2v.zip' | sha256sum --check
+          unzip -qo /tmp/sv2v.zip -d /tmp
+          sudo install /tmp/sv2v-Linux/sv2v /usr/local/bin/sv2v
+          verilator --version
+          sv2v --version
+          yosys -V
 
       - name: Lint (verilator -Wall)
         run: verilator --lint-only -sv -Wall rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv --top-module oh1_core
@@ -49,4 +59,6 @@ jobs:
       - name: Yosys elaboration check
         run: |
           mkdir -p sim
-          yosys -p 'read_verilog -sv rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv; hierarchy -top oh1_core; proc; check'
+          sv2v rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv > sim/oh1_core.v
+          yosys -p 'read_verilog sim/oh1_core.v; hierarchy -check -top oh1_core; proc; check -assert'
+
