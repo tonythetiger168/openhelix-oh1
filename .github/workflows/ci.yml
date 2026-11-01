@@ -25,7 +25,9 @@ jobs:
           yosys -V
 
       - name: Lint (verilator -Wall)
-        run: verilator --lint-only -sv -Wall rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv --top-module oh1_core
+        run: |
+          verilator --lint-only -sv -Wall rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv --top-module oh1_core
+          verilator --lint-only -sv -Wall rtl/oh1_axi_lite.sv --top-module oh1_axi_lite
 
       - name: Smoke test (12 checks)
         run: |
@@ -41,14 +43,28 @@ jobs:
             --top-module tb_simd -Mdir obj_simd -o Vtb_simd
           ./obj_simd/Vtb_simd
 
-      - name: CRV random vs golden ISS (3 seeds × 20 programs)
+      - name: CRV random vs golden ISS (3 seeds × 50 programs)
         run: |
           verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
             rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv \
             --top-module tb_rand -Mdir obj_rand -o Vtb_rand
-          for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=20; done
+          for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=50; done
 
-      - name: AXI4-Lite integration (AXI load → start → run → STATUS → verify)
+      - name: AXI4-Lite protocol (AW/W ordering, backpressure, WSTRB, errors, IRQ W1C)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_axi_lite.sv tb/tb_axi_smoke.sv \
+            --top-module tb_axi_smoke -Mdir obj_axi -o Vtb_axi
+          ./obj_axi/Vtb_axi
+
+      - name: Divergence stack overflow + relaunch
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_stk_ovf.sv \
+            --top-module tb_stk_ovf -Mdir obj_stk -o Vtb_stk
+          ./obj_stk/Vtb_stk
+
+      - name: AXI4-Lite integration (load → start → STATUS → relaunch → divergent store → IRQ)
         run: |
           verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
             rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv rtl/oh1_axi_lite.sv \
@@ -61,3 +77,5 @@ jobs:
           mkdir -p sim
           sv2v rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv > sim/oh1_core.v
           yosys -p 'read_verilog sim/oh1_core.v; hierarchy -check -top oh1_core; proc; check -assert'
+          sv2v rtl/oh1_axi_lite.sv > sim/oh1_axi_lite.v
+          yosys -p 'read_verilog sim/oh1_axi_lite.v; hierarchy -check -top oh1_axi_lite; proc; check -assert'

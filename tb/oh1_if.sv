@@ -16,6 +16,7 @@ interface oh1_if (input logic clk);
   logic [31:0] start_pc;
   logic [31:0] imem_addr, imem_rdata;
   logic        dmem_ren, dmem_wen;
+  oh1_pkg::lane_mask_t dmem_wmask;   // per-lane store strobe
   logic [31:0] dmem_raddr [LANES], dmem_rdata [LANES];
   logic [31:0] dmem_waddr [LANES], dmem_wdata [LANES];
   logic        exec_valid;
@@ -40,7 +41,7 @@ interface oh1_if (input logic clk);
   always_ff @(posedge clk) begin
     if (dmem_wen)
       for (int l = 0; l < LANES; l++)
-        dmem[dmem_waddr[l][13:2] & 32'hFFF] <= dmem_wdata[l];
+        if (dmem_wmask[l]) dmem[dmem_waddr[l][13:2] & 32'hFFF] <= dmem_wdata[l];
   end
 
   // ---- backdoor API ----
@@ -71,7 +72,7 @@ interface oh1_if (input logic clk);
   clocking mon_cb @(posedge clk);
     default input #1step;
     input exec_valid, exec_pc, exec_mask, wb_valid, wb_rd, wb_lane_mask,
-          wb_data, dmem_ren, dmem_wen, dmem_raddr, dmem_waddr, dmem_wdata,
+          wb_data, dmem_ren, dmem_wen, dmem_wmask, dmem_raddr, dmem_waddr, dmem_wdata,
           done, illegal, imem_addr;
   endclocking
 
