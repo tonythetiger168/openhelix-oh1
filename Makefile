@@ -23,7 +23,7 @@ VCS_OPTS += -cm line+tgl+fsm+cond+assert
 SIMV_COV := -cm line+tgl+fsm+cond+assert -cm_name $(TEST)_$(SEED)
 endif
 
-.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk regress
+.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk isa regress
 
 # ---- 開源工具鏈（使用者空間，見 tools/manifest.txt）----
 # 使用: source tools/env.sh 後 make lint
@@ -106,11 +106,20 @@ stk: | sim/bin
 	cp /dev/shm/obj_stk/Vtb_stk sim/bin/ && rm -rf /dev/shm/obj_stk
 	./sim/bin/Vtb_stk
 
+# ISA extensions: MUL, vdot4.i8, JAL/JALR call-return, divergent JALR -> illegal
+isa: | sim/bin
+	rm -rf /dev/shm/obj_isa
+	verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+	  rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_isa_ext.sv \
+	  --top-module tb_isa_ext -Mdir /dev/shm/obj_isa -o Vtb_isa
+	cp /dev/shm/obj_isa/Vtb_isa sim/bin/ && rm -rf /dev/shm/obj_isa
+	./sim/bin/Vtb_isa
+
 # Full open-source regression (same set as CI)
-regress: lint smoke simd axi axi-int stk
-	$(MAKE) rand SEED=1 N_PROG=50
-	$(MAKE) rand SEED=7 N_PROG=50
-	$(MAKE) rand SEED=42 N_PROG=50
+regress: lint smoke simd axi axi-int stk isa
+	$(MAKE) rand SEED=1 N_PROG=100
+	$(MAKE) rand SEED=7 N_PROG=100
+	$(MAKE) rand SEED=42 N_PROG=100
 
 $(RAND_BIN): rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv | sim/bin
 	rm -rf /tmp/obj_rand

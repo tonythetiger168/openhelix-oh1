@@ -43,12 +43,12 @@ jobs:
             --top-module tb_simd -Mdir obj_simd -o Vtb_simd
           ./obj_simd/Vtb_simd
 
-      - name: CRV random vs golden ISS (3 seeds × 50 programs)
+      - name: CRV random vs golden ISS (3 seeds × 100 programs)
         run: |
           verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
             rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_rand.sv \
             --top-module tb_rand -Mdir obj_rand -o Vtb_rand
-          for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=50; done
+          for s in 1 7 42; do ./obj_rand/Vtb_rand +seed=$s +n_prog=100; done
 
       - name: AXI4-Lite protocol (AW/W ordering, backpressure, WSTRB, errors, IRQ W1C)
         run: |
@@ -56,6 +56,13 @@ jobs:
             rtl/oh1_axi_lite.sv tb/tb_axi_smoke.sv \
             --top-module tb_axi_smoke -Mdir obj_axi -o Vtb_axi
           ./obj_axi/Vtb_axi
+
+      - name: ISA extensions (MUL, vdot4.i8, JAL/JALR)
+        run: |
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD \
+            rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/tb_isa_ext.sv \
+            --top-module tb_isa_ext -Mdir obj_isa -o Vtb_isa
+          ./obj_isa/Vtb_isa
 
       - name: Divergence stack overflow + relaunch
         run: |

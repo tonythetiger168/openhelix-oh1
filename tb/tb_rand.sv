@@ -93,6 +93,8 @@ module tb_rand;
       I_SW:            return {{20{s_imm[11]}}, s_imm};
       I_BEQ, I_BNE, I_BLT, I_BGE: return {{19{b_imm[11]}}, b_imm, 1'b0};
       I_LUI, I_AUIPC:  return {ins[31:12], 12'b0};
+      I_JAL:           return {{12{ins[31]}}, ins[19:12], ins[20], ins[30:21], 1'b0};
+      I_JALR:          return {{20{i_imm[11]}}, i_imm};
       // custom-0（split 等）：imm_d = sext(i_imm) << 1（oh1_decode L84，半字組）
       default:         return {{19{i_imm[11]}}, i_imm, 1'b0};
     endcase
@@ -121,7 +123,7 @@ module tb_rand;
     case (k)
       I_ADD, I_SUB, I_AND, I_OR, I_XOR, I_SLL, I_SRL, I_SRA, I_SLT, I_SLTU,
       I_ADDI, I_ANDI, I_ORI, I_XORI, I_SLTI, I_SLTIU, I_SLLI, I_SRLI, I_SRAI,
-      I_LUI, I_AUIPC, I_CSRR: begin
+      I_LUI, I_AUIPC, I_CSRR, I_MUL, I_VDOT4: begin
         wb_en = 1; wb_mask = iss_act;
         for (int l = 0; l < LANES; l++) if (iss_act[l]) begin
           case (k)
@@ -146,6 +148,8 @@ module tb_rand;
             I_SRAI: wdata[l] = $signed(a[l]) >>> imm[4:0];
             I_LUI : wdata[l] = imm;
             I_AUIPC:wdata[l] = iss_pc + imm;
+            I_MUL : wdata[l] = a[l] * b[l];
+            I_VDOT4:wdata[l] = ((ins[11:7] == 0) ? 32'd0 : iss_rf[l][ins[11:7]]) + dot4_i8(a[l], b[l]);
             default: wdata[l] = ((imm[11:0] == CSR_TID) || (imm[11:0] == CSR_LANEID)) ? 32'(l) : 0;
           endcase
         end
@@ -204,6 +208,22 @@ module tb_rand;
         iss_act = lane_mask_t'((32'd1 << tmc_n) - 32'd1);
       end
 
+      I_JAL, I_JALR: begin
+        logic [31:0] tgt; bit have;
+        wb_en = 1; wb_mask = iss_act;
+        for (int l = 0; l < LANES; l++) if (iss_act[l]) wdata[l] = iss_pc + 32'd4;
+        if (k == I_JAL) pc_n = iss_pc + imm;
+        else begin
+          // target of the lowest active lane (lane 0 if none); disagreement is illegal
+          have = 0; tgt = (a[0] + imm) & ~32'd1;
+          for (int l = 0; l < LANES; l++)
+            if (iss_act[l] && !have) begin tgt = (a[l] + imm) & ~32'd1; have = 1; end
+          for (int l = 0; l < LANES; l++)
+            if (iss_act[l] && (((a[l] + imm) & ~32'd1) != tgt)) iss_ill = 1;
+          pc_n = tgt;
+        end
+      end
+
       I_BAR: ;
 
       I_WEXIT, I_TEXIT: iss_done = 1;
@@ -229,7 +249,7 @@ module tb_rand;
   logic [31:0] g_pmem [$];
   int          g_dinit_idx [$];
   logic [31:0] g_dinit_val [$];
-  int          g_nest_limit, g_regions_left, g_br_left, g_lsu_left, g_tmc_left;
+  int          g_nest_limit, g_regions_left, g_br_left, g_lsu_left, g_tmc_left, g_jmp_left;
 
   function automatic int g_pick_src();   // 2..5,7（避開 x1=tid、x6=tid*4）
     int v = $urandom_range(0, 4);
@@ -237,12 +257,14 @@ module tb_rand;
   endfunction
 
   function automatic void g_filler();
-    case ($urandom_range(0, 9))
+    case ($urandom_range(0, 11))
       0,1,2,3: g_pmem.push_back(enc_rtype(ikind_e'($urandom_range(I_ADD, I_SLTU)),
                           $urandom_range(2, 7), g_pick_src(), g_pick_src()));
       4,5,6,7: g_pmem.push_back(enc_itype(ikind_e'($urandom_range(I_ADDI, I_SRAI)),
                           g_pick_src(), g_pick_src(), $urandom_range(0, 63)));
       8:       g_pmem.push_back(enc_lui(I_LUI,   g_pick_src(), $urandom_range(0, 16'hFFFF)));
+      10:      g_pmem.push_back(enc_rtype(I_MUL, $urandom_range(2, 7), g_pick_src(), g_pick_src()));
+      11:      g_pmem.push_back(enc_vdot4($urandom_range(2, 7), g_pick_src(), g_pick_src()));
       default: g_pmem.push_back(enc_lui(I_AUIPC, g_pick_src(), $urandom_range(0, 16'hFFFF)));
     endcase
   endfunction
@@ -278,6 +300,19 @@ module tb_rand;
     repeat (off) g_filler();
   endfunction
 
+  // Forward jumps that skip `off` fillers: JAL, or AUIPC + JALR (warp-uniform target)
+  function automatic void g_jump();
+    int off = $urandom_range(0, 3);
+    logic [4:0] link = $urandom_range(0, 1) ? 5'd3 : 5'd0;
+    if ($urandom_range(0, 1)) begin
+      g_pmem.push_back(enc_jal(link, 20'((off + 1) * 2)));          // byte offset (off+1)*4, passed >> 1
+    end else begin
+      // absolute target through x0 (programs start at pc 0): uniform even if tmc left no lane active
+      g_pmem.push_back(enc_jalr(link, 5'd0, 12'((g_pmem.size() + 1 + off) * 4)));
+    end
+    repeat (off) g_filler();
+  endfunction
+
   function automatic void g_lsu();
     int imm = $urandom_range(0, 15) * 4;
     if ($urandom_range(0, 1)) begin
@@ -302,18 +337,20 @@ module tb_rand;
     g_br_left      = $urandom_range(0, 6);
     g_lsu_left     = $urandom_range(0, 6);
     g_tmc_left     = $urandom_range(0, 3);
+    g_jmp_left     = $urandom_range(0, 4);
 
     g_pmem.push_back(enc_itype(I_CSRR, 5'd1, 5'd0, CSR_TID));   // x1 = tid
     g_pmem.push_back(enc_itype(I_SLLI, 5'd6, 5'd1, 12'd2));     // x6 = tid*4
     g_pmem.push_back(enc_itype(I_ADDI, 5'd2, 5'd0, $urandom_range(1, 31)));
 
-    budget = g_regions_left + g_br_left + g_lsu_left + g_tmc_left;
+    budget = g_regions_left + g_br_left + g_lsu_left + g_tmc_left + g_jmp_left;
     while (budget > 0 && g_pmem.size() < max_prog_len - 8) begin
-      case ($urandom_range(0, 3))
+      case ($urandom_range(0, 4))
         0: if (g_regions_left > 0) begin g_region(0); g_regions_left--; budget--; end
         1: if (g_br_left      > 0) begin g_branch();   g_br_left--;      budget--; end
         2: if (g_lsu_left     > 0) begin g_lsu();      g_lsu_left--;     budget--; end
         3: if (g_tmc_left     > 0) begin g_tmc();      g_tmc_left--;     budget--; end
+        4: if (g_jmp_left     > 0) begin g_jump();     g_jmp_left--;     budget--; end
       endcase
       repeat ($urandom_range(0, 3)) g_filler();
     end

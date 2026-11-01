@@ -1,6 +1,6 @@
 # OH-1 AXI4-Lite register map
 
-Applies to `rtl/oh1_axi_lite.sv` (VERSION `0x0002_0001`). All registers are 32-bit.
+Applies to `rtl/oh1_axi_lite.sv` (VERSION `0x0002_0002`). All registers are 32-bit.
 
 ## Address windows
 
@@ -21,7 +21,7 @@ Applies to `rtl/oh1_axi_lite.sv` (VERSION `0x0002_0001`). All registers are 32-b
 | `0x0C` | DATA_BASE | RW | Reserved for DMA (scratch) |
 | `0x10` | PROG_LEN | RW | Reserved for DMA (scratch) |
 | `0x14` | IRQ_STAT | R/W1C | `[0]` done event, `[1]` fault event (illegal or stk_ovf) |
-| `0x18` | VERSION | RO | `0x0002_0001` |
+| `0x18` | VERSION | RO | `0x0002_0002` (rev 2 adds MUL, JAL/JALR, vdot4.i8) |
 | `0x1C` | CAP | RO | `{MEM_WORDS[15:0], STK_P[7:0], LANES_P[7:0]}` |
 
 Writes to RO registers return SLVERR. WSTRB is honoured on RW registers and forwarded to memory as `mem_wstrb_o`.

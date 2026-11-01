@@ -90,6 +90,8 @@ class oh1_scoreboard extends uvm_component;
       I_SW:            return {{20{s_imm[11]}}, s_imm};
       I_BEQ, I_BNE, I_BLT, I_BGE: return {{19{b_imm[11]}}, b_imm, 1'b0};
       I_LUI, I_AUIPC:  return {ins[31:12], 12'b0};
+      I_JAL:           return {{12{ins[31]}}, ins[19:12], ins[20], ins[30:21], 1'b0};
+      I_JALR:          return {{20{i_imm[11]}}, i_imm};
       // custom-0（split 等）：imm_d = sext(i_imm) << 1（oh1_decode，半字組）
       I_SPLIT, I_TMC, I_BAR, I_WEXIT, I_TEXIT: return {{19{i_imm[11]}}, i_imm, 1'b0};
       default:         return 32'b0;
@@ -124,7 +126,7 @@ class oh1_scoreboard extends uvm_component;
     case (k)
       I_ADD , I_SUB , I_AND , I_OR  , I_XOR , I_SLL , I_SRL , I_SRA , I_SLT , I_SLTU,
       I_ADDI, I_ANDI, I_ORI , I_XORI, I_SLTI, I_SLTIU, I_SLLI, I_SRLI, I_SRAI,
-      I_LUI , I_AUIPC, I_CSRR: begin
+      I_LUI , I_AUIPC, I_CSRR, I_MUL, I_VDOT4: begin
         wb_en = 1; wb_mask = iss_act;
         for (int l = 0; l < LANES; l++) if (iss_act[l]) begin
           case (k)
@@ -149,6 +151,8 @@ class oh1_scoreboard extends uvm_component;
             I_SRAI: wdata[l] = $signed(a[l]) >>> imm[4:0];
             I_LUI : wdata[l] = imm;
             I_AUIPC:wdata[l] = iss_pc + imm;
+            I_MUL : wdata[l] = a[l] * b[l];
+            I_VDOT4:wdata[l] = ((ins[11:7] == 0) ? 32'd0 : iss_rf[l][ins[11:7]]) + dot4_i8(a[l], b[l]);
             default: wdata[l] = ((imm[11:0] == CSR_TID) || (imm[11:0] == CSR_LANEID)) ? 32'(l) : 0;
           endcase
         end
@@ -206,6 +210,22 @@ class oh1_scoreboard extends uvm_component;
       I_TMC: begin
         tmc_n  = (a[0] >= LANES) ? LANES : a[0];   // tmc_rs1_w = lane0 的 rs1
         iss_act = lane_mask_t'((32'd1 << tmc_n) - 32'd1);
+      end
+
+      I_JAL, I_JALR: begin
+        logic [31:0] tgt; bit have;
+        wb_en = 1; wb_mask = iss_act;
+        for (int l = 0; l < LANES; l++) if (iss_act[l]) wdata[l] = iss_pc + 32'd4;
+        if (k == I_JAL) pc_n = iss_pc + imm;
+        else begin
+          // target of the lowest active lane (lane 0 if none); disagreement is illegal
+          have = 0; tgt = (a[0] + imm) & ~32'd1;
+          for (int l = 0; l < LANES; l++)
+            if (iss_act[l] && !have) begin tgt = (a[l] + imm) & ~32'd1; have = 1; end
+          for (int l = 0; l < LANES; l++)
+            if (iss_act[l] && (((a[l] + imm) & ~32'd1) != tgt)) iss_ill = 1;
+          pc_n = tgt;
+        end
       end
 
       I_BAR: ;                                     // 單 warp：nop

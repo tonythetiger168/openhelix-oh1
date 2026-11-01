@@ -65,6 +65,8 @@ module oh1_core import oh1_pkg::*; #(
   // ---- RF（per-lane 讀口；寫口在 always_ff）----
   logic [31:0] rf_q [LANES_P][32];
   logic [31:0] rs1_data [LANES_P], rs2_data [LANES_P];
+  logic [31:0] rd_data  [LANES_P];   // third read port: vdot4 accumulator
+  logic [31:0] jtgt     [LANES_P];   // per-lane JALR target
 
   // ---- 分歧堆疊（標記式雙 entry 模型）----
   lane_mask_t     act_mask_q;
@@ -91,7 +93,9 @@ module oh1_core import oh1_pkg::*; #(
     always_comb begin
       rs1_data[l] = (rs1_d == 5'd0) ? 32'b0 : rf_q[l][rs1_d];
       rs2_data[l] = (rs2_d == 5'd0) ? 32'b0 : rf_q[l][rs2_d];
+      rd_data[l]  = (rd_d  == 5'd0) ? 32'b0 : rf_q[l][rd_d];
     end
+    assign jtgt[l] = (rs1_data[l] + imm_d) & ~32'd1;
     if (l == 0) begin : gen_tmc_rs1
       assign tmc_rs1_w = rs1_data[0];
     end
@@ -133,6 +137,10 @@ module oh1_core import oh1_pkg::*; #(
         I_SRAI: if (act_mask_q[l]) wb_data_c[l] = $signed(rs1_iso) >>> imm_d[4:0];
         I_LUI : if (act_mask_q[l]) wb_data_c[l] = imm_d;
         I_AUIPC:if (act_mask_q[l]) wb_data_c[l] = ex_pc_q + imm_d;
+        I_MUL : if (act_mask_q[l]) wb_data_c[l] = rs1_iso * rs2_iso;
+        I_JAL, I_JALR:
+                if (act_mask_q[l]) wb_data_c[l] = ex_pc_q + 32'd4;
+        I_VDOT4:if (act_mask_q[l]) wb_data_c[l] = rd_data[l] + dot4_i8(rs1_iso, rs2_iso);
         I_LW  : begin
           dmem_raddr_o[l] = rs1_data[l] + imm_d;   // LSU：不可隔離（inactive lane 仍參與）
           if (act_mask_q[l]) wb_data_c[l] = dmem_rdata_i[l];
@@ -174,6 +182,16 @@ module oh1_core import oh1_pkg::*; #(
   logic [31:0] redirect_pc_c;
   int unsigned tmc_n;
   logic        ex_live_c;     // EX holds a real instruction (not a bubble / post-done)
+  logic [31:0] jalr_pc_c;     // JALR target of the lowest active lane (lane 0 if none active)
+  logic        jalr_div_c;    // active lanes disagree on the JALR target (unsupported -> illegal)
+  always_comb begin
+    jalr_pc_c  = jtgt[0];
+    jalr_div_c = 1'b0;
+    for (int l = LANES_P - 1; l >= 0; l--)
+      if (act_mask_q[l]) jalr_pc_c = jtgt[l];
+    for (int l = 0; l < LANES_P; l++)
+      if (act_mask_q[l] && (jtgt[l] != jalr_pc_c)) jalr_div_c = 1'b1;
+  end
   logic        stk_full_c;    // push would exceed STK_P entries
   assign ex_live_c  = ex_vld_q && !done_q;
   assign stk_full_c = push_two_c ? (32'(stk_ptr_q) + 2 > STK_P) : (32'(stk_ptr_q) + 1 > STK_P);
@@ -197,9 +215,22 @@ module oh1_core import oh1_pkg::*; #(
     unique case (kind)
       I_ADD, I_SUB, I_AND, I_OR, I_XOR, I_SLL, I_SRL, I_SRA, I_SLT, I_SLTU,
       I_ADDI, I_ANDI, I_ORI, I_XORI, I_SLTI, I_SLTIU, I_SLLI, I_SRLI, I_SRAI,
-      I_LUI, I_AUIPC, I_CSRR: begin
+      I_LUI, I_AUIPC, I_CSRR, I_MUL, I_VDOT4: begin
         wb_en_c        = 1'b1;
         wb_lane_mask_c = act_mask_q;
+      end
+      // ---- jumps: warp-uniform; rd = pc + 4 on active lanes ----
+      I_JAL: begin
+        wb_en_c        = 1'b1;
+        wb_lane_mask_c = act_mask_q;
+        redirect_en_c  = 1'b1;
+        redirect_pc_c  = ex_pc_q + imm_d;
+      end
+      I_JALR: begin
+        wb_en_c        = 1'b1;
+        wb_lane_mask_c = act_mask_q;
+        redirect_en_c  = 1'b1;
+        redirect_pc_c  = jalr_pc_c;
       end
       I_LW: begin
         dmem_ren_o     = ex_live_c;
@@ -320,7 +351,7 @@ module oh1_core import oh1_pkg::*; #(
           stk_ptr_q <= stk_ptr_q - 1'b1;
         end
         act_mask_q <= pop_en_c ? stk_top_mask : next_act_c;
-        if (ill_d) ill_q <= 1'b1;
+        if (ill_d || (kind == I_JALR && jalr_div_c)) ill_q <= 1'b1;
         if ((kind == I_WEXIT) || (kind == I_TEXIT)) done_q <= 1'b1;
       end
     end
@@ -329,7 +360,7 @@ module oh1_core import oh1_pkg::*; #(
   assign exec_valid_o   = ex_vld_q && !done_q;
   assign exec_pc_o      = ex_pc_q;
   assign exec_mask_o    = act_mask_q;
-  assign wb_valid_o     = wb_en_c && ex_vld_q && !done_q;
+  assign wb_valid_o     = wb_en_c && ex_vld_q && !done_q && (rd_d != 5'd0);   // x0 writes are not architectural
   assign wb_rd_o        = rd_d;
   assign wb_lane_mask_o = wb_lane_mask_c;
   assign done_o         = done_q;

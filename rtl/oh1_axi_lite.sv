@@ -30,7 +30,7 @@ module oh1_axi_lite #(
   parameter int          MEM_WORDS   = 4096,
   parameter int          ADDR_W      = 32,
   parameter int          DATA_W      = 32,
-  parameter logic [31:0] OH1_VERSION = 32'h0002_0001   // M2.0, rev 1
+  parameter logic [31:0] OH1_VERSION = 32'h0002_0002   // M2.0, rev 2 (MUL, JAL/JALR, vdot4.i8)
 )(
   input  logic                     clk_i,
   input  logic                     rst_ni,

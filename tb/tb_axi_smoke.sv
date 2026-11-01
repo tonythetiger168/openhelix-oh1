@@ -182,7 +182,7 @@ module tb_axi_smoke;
     $display("[TB_AXI] SLVERR / DECERR OK");
 
     // ---- 5. identification ----
-    rd_expect(32'h18, 32'h0002_0001);
+    rd_expect(32'h18, 32'h0002_0002);
     rd_expect(32'h1C, {16'd4096, 8'd8, 8'd4});
 
     // ---- 6. start / busy / IRQ ----
