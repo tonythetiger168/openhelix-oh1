@@ -1,0 +1,63 @@
+# OH-1 code-coverage exclusions. Every entry must name a reason why the point is
+# unreachable (or is a tool artefact) and, where possible, the assertion or
+# coverage evidence that backs it. Matching: type (line/branch/expression/toggle/any),
+# file, optional line / lines [a, b], optional regex `match` on the point name.
+# Points matched here are reported as excluded, never silently dropped, and the
+# report also counts how many of them were hit anyway.
+# Helper functions in rtl/oh1_pkg.sv that no RTL module calls are excluded
+# automatically by scripts/cov_report.py (pyslang reference scan).
+
+- id: DEC-1
+  type: line
+  file: rtl/oh1_decode.sv
+  line: 59
+  reason: "`default` of the OP-IMM funct3 case. All 8 funct3 values have explicit items, so the default is unreachable."
+
+- id: AXI-1
+  type: line
+  file: rtl/oh1_axi_lite.sv
+  line: 298
+  reason: "`default` of the rd_state case. rd_state_e has 3 values in 2 bits; the 4th encoding never occurs (assertion a_rd_legal)."
+
+- id: AXI-2
+  type: branch
+  file: rtl/oh1_axi_lite.sv
+  lines: [93, 95]
+  match: "^if$"
+  reason: "Tool artefact: the `if (...) return T_x;` arms of function decode_target never increment Verilator's branch counter because the `return` leaves the function before it. The same conditions are hit thousands of times in expression coverage (line 93) and the T_REG/T_IMEM/T_DMEM results are covered by functional bins oh1.soc.wr.window / rd.window."
+
+- id: TGL-X0
+  type: toggle
+  file: rtl/oh1_core.sv
+  match: "^rf_q\\[\\d\\]\\[0\\]\\["
+  reason: "x0 of every lane is never written (writes to rd=0 are suppressed); proven by assertion g_x0[*].a_x0_zero."
+
+- id: TGL-ENUM
+  type: toggle
+  file: rtl/oh1_decode.sv
+  match: "^kind(_o)?\\[([6-9]|[12][0-9]|3[01])\\]"
+  reason: "oh1_pkg::ikind_e is an int-based enum with 41 values; bits 31:6 are constant 0 by type."
+
+- id: TGL-ENUM-CORE
+  type: toggle
+  file: rtl/oh1_core.sv
+  match: "^kind\\[([6-9]|[12][0-9]|3[01])\\]"
+  reason: "Same int-based enum (ikind_e) bits 31:6, constant 0 by type."
+
+- id: TGL-MEMADDR
+  type: toggle
+  file: rtl/oh1_axi_lite.sv
+  match: "^mem_addr_o\\[(1[2-9]|2[0-9]|3[01])\\]"
+  reason: "mem_addr_o is only loaded with in-range word indices (< MEM_WORDS = 4096), so bits 31:12 stay 0 (assertion a_mem_range)."
+
+- id: TGL-JALR-BIT0
+  type: toggle
+  file: rtl/oh1_core.sv
+  match: "^(g_lane\\[\\d\\]\\.)?(jtgt\\[\\d\\]|jalr_pc_c)\\[0\\]"
+  reason: "JALR targets are (rs1 + imm) & ~1 by ISA definition, so bit 0 is constant 0."
+
+- id: TGL-STK0
+  type: toggle
+  file: rtl/oh1_core.sv
+  match: "^(stk_tag_q\\[0\\]:1->0|stk_pc_q\\[0\\]\\[|stk_mask_q\\[0\\]\\[0\\]:1->0)"
+  reason: "Stack entry 0 is only written by the tag half of a push at depth 0: tag=1, pc=0, mask = the depth-0 active mask, which is always a launch/TMC mask containing lane 0 (a push needs a non-empty mask). Proven by assertion a_stk0_tag."
