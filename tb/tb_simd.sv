@@ -96,17 +96,19 @@ module tb_simd;
     start <= 0;
 
     // ---- watchdog ----
-    fork : wd
-      begin
-        wait (done === 1'b1);
-        disable wd;
+    // Bounded cycle wait: portable to Verilator 5.032 without named-fork
+    // disable. Completion must be a known 1; timeout remains fatal.
+    begin : watchdog
+      int cycles = 0;
+      while (done !== 1'b1 && cycles < 2000) begin
+        @(posedge clk);
+        cycles++;
       end
-      begin
-        repeat (2000) @(posedge clk);
+      if (done !== 1'b1) begin
         $display("[TB_SIMD] FAIL: watchdog timeout");
         $fatal(1);
       end
-    join_any
+    end
 
     // ---- 逐 lane 檢查 ----
     begin
