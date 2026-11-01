@@ -29,6 +29,9 @@ package oh1_pkg;
   localparam logic [2:0] F3_TEXIT = 3'b101;
   localparam logic [2:0] F3_VDOT  = 3'b110;  // M1.0：4-lane FP16 dot-product（Tensor Lite）
   localparam logic [2:0] F3_WSPAWN = 3'b111; // M2.0：多 warp 產生（M1.0 預留）
+  // F3_VDOT sub-encodings by funct7: 7'b0000000 = FP16 memory vdot (spec, not in RTL yet),
+  // 7'b0000001 = vdot4.i8 register form (implemented): rd += sum_k s8(rs1.b[k]) * s8(rs2.b[k])
+  localparam logic [6:0] F7_VDOT4_I8 = 7'b0000001;
 
   // ---- CSR 位址（唯讀）----
   parameter logic [11:0] CSR_TID    = 12'h8C0;  // lane 線性 id
@@ -44,6 +47,8 @@ package oh1_pkg;
     I_CSRR,
     I_SPLIT, I_JOIN, I_TMC, I_BAR, I_WEXIT, I_TEXIT,
     I_VDOT, I_WSPAWN,
+    // M2.0 ISA deepening (appended so generator ranges above stay valid)
+    I_MUL, I_JAL, I_JALR, I_VDOT4,
     I_ILL
   } ikind_e;
 
@@ -61,6 +66,7 @@ package oh1_pkg;
       I_SRA : begin f7=7'b0100000; f3=3'b101; end
       I_SLT : begin f7=7'b0000000; f3=3'b010; end
       I_SLTU: begin f7=7'b0000000; f3=3'b011; end
+      I_MUL : begin f7=7'b0000001; f3=3'b000; end
       default: begin f7=7'b0000000; f3=3'b000; end
     endcase
     return {f7, rs2, rs1, f3, rd, 7'b0110011};
@@ -117,6 +123,29 @@ package oh1_pkg;
     return {imm[11:5], rs2, rs1, 3'b010, imm[4:0], 7'b0100011};
   endfunction
 
+  // JAL rd, imm (imm = byte offset >> 1, i.e. pass offset[20:1]; J-type)
+  function automatic logic [31:0] enc_jal(logic [4:0] rd, logic [20:1] imm);
+    return {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111};
+  endfunction
+
+  // JALR rd, imm(rs1)
+  function automatic logic [31:0] enc_jalr(logic [4:0] rd, logic [4:0] rs1, logic [11:0] imm);
+    return {imm, rs1, 3'b000, rd, 7'b1100111};
+  endfunction
+
+  // vdot4.i8 rd, rs1, rs2 : per lane rd += sum of 4 signed INT8 products
+  function automatic logic [31:0] enc_vdot4(logic [4:0] rd, logic [4:0] rs1, logic [4:0] rs2);
+    return {F7_VDOT4_I8, rs2, rs1, F3_VDOT, rd, OPC_CUSTOM0};
+  endfunction
+
+  // Reference INT8x4 dot product (ISS and benches)
+  function automatic logic [31:0] dot4_i8(logic [31:0] a, logic [31:0] b);
+    logic signed [31:0] acc = 0;
+    for (int k = 0; k < 4; k++)
+      acc += 32'($signed(a[k*8 +: 8])) * 32'($signed(b[k*8 +: 8]));
+    return acc;
+  endfunction
+
   /* verilator lint_off UNUSEDSIGNAL */
   // ---- 軟體端解碼（ISS 使用；與 rtl/oh1_decode.sv 硬體解碼對齊）----
   function automatic ikind_e dec_kind(logic [31:0] ins);
@@ -128,6 +157,7 @@ package oh1_pkg;
                     {7'b0000000,3'b100}: return I_XOR;  {7'b0000000,3'b001}: return I_SLL;
                     {7'b0000000,3'b101}: return I_SRL;  {7'b0100000,3'b101}: return I_SRA;
                     {7'b0000000,3'b010}: return I_SLT;  {7'b0000000,3'b011}: return I_SLTU;
+                    {7'b0000001,3'b000}: return I_MUL;
                     default: return I_ILL;
                   endcase
       7'b0010011: case (ins[14:12])
@@ -139,6 +169,8 @@ package oh1_pkg;
                   endcase
       7'b0110111: return I_LUI;
       7'b0010111: return I_AUIPC;
+      7'b1101111: return I_JAL;
+      7'b1100111: return (ins[14:12]==3'b000) ? I_JALR : I_ILL;
       7'b1100011: case (ins[14:12])
                     3'b000: return I_BEQ; 3'b001: return I_BNE;
                     3'b100: return I_BLT; 3'b101: return I_BGE;
@@ -151,7 +183,7 @@ package oh1_pkg;
                      F3_SPLIT: return I_SPLIT; F3_JOIN: return I_JOIN;
                      F3_TMC:   return I_TMC;   F3_BAR:  return I_BAR;
                      F3_WEXIT: return I_WEXIT; F3_TEXIT:return I_TEXIT;
-                     F3_VDOT:  return I_VDOT;                    // M1.0 Tensor Lite
+                     F3_VDOT:  return (ins[31:25]==F7_VDOT4_I8) ? I_VDOT4 : I_VDOT;
                      F3_WSPAWN:return I_WSPAWN;                  // M2.0 多 warp
                      default: return I_ILL;
                    endcase
@@ -165,7 +197,7 @@ package oh1_pkg;
   function automatic logic [31:0] enc_vdot(input logic [4:0] rd,
                                            input logic [4:0] rs1,
                                            input logic [4:0] len);  // len 2/4/8
-    return {2'b00, 12'(len), 5'(rs1), 3'(F3_VDOT), 5'(rd), 5'(OPC_CUSTOM0)};
+    return {12'(len), rs1, F3_VDOT, rd, OPC_CUSTOM0};   // FP16 form: imm[11:0] = len
   endfunction
 
 endpackage : oh1_pkg

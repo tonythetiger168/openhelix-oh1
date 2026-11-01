@@ -39,6 +39,7 @@ module oh1_decode import oh1_pkg::*; (
           {7'b0100000,3'b101}: kind = I_SRA;
           {7'b0000000,3'b010}: kind = I_SLT;
           {7'b0000000,3'b011}: kind = I_SLTU;
+          {7'b0000001,3'b000}: kind = I_MUL;
           default: ;
         endcase
       end
@@ -59,6 +60,13 @@ module oh1_decode import oh1_pkg::*; (
         endcase
       end
       7'b0110111: begin kind = I_LUI;   imm = {u_imm, 12'b0}; end
+      7'b1101111: begin
+        kind = I_JAL;
+        imm  = {{11{instr_i[31]}}, instr_i[31], instr_i[19:12], instr_i[20], instr_i[30:21], 1'b0};
+      end
+      7'b1100111: if (instr_i[14:12]==3'b000) begin
+        kind = I_JALR; imm = {{20{i_imm[11]}}, i_imm};
+      end
       7'b0010111: begin kind = I_AUIPC; imm = {u_imm, 12'b0}; end
       7'b1100011: begin
         unique case (instr_i[14:12])
@@ -87,6 +95,7 @@ module oh1_decode import oh1_pkg::*; (
           F3_BAR  : kind = I_BAR;
           F3_WEXIT: kind = I_WEXIT;
           F3_TEXIT: kind = I_TEXIT;
+          F3_VDOT : if (instr_i[31:25] == F7_VDOT4_I8) kind = I_VDOT4;   // FP16 form stays illegal
           default: ;
         endcase
       end

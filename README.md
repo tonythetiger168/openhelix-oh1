@@ -9,7 +9,7 @@
 
 OH-1 brings **GPU warp semantics** (split / join / tmc) into a 2-stage-pipeline, MCU-class micro-core:
 
-- **21-instruction ISA** — RV32I-like integer core + Custom-0 SIMT control (split / join / tmc / bar / wexit / texit)
+- **25-instruction ISA** — RV32I-like integer core with MUL, JAL/JALR (warp-uniform jumps and calls), Custom-0 SIMT control (split / join / tmc / bar / wexit / texit) and `vdot4.i8` INT8×4 dot-accumulate ([ISA notes](doc/isa_extensions.md))
 - **Warp-uniform branching** — a branch is taken only if *all* active lanes agree (AND semantics)
 - **Marked dual-entry divergence stack** — 8-deep, split pushes tag + else entries; join pops else first, then tag restores the mask
 - **Per-lane datapath** — 4 × (32×32b RF + ALU + LSU), lockstep single-issue
@@ -28,6 +28,7 @@ make rand  SEED=7 N_PROG=50  # CRV: random ISA programs vs instruction-level gol
 make axi                   # AXI4-Lite protocol: AW/W ordering, backpressure, WSTRB, errors, IRQ W1C
 make axi-int               # AXI + core: load, start, relaunch, divergent store, IRQ
 make stk                   # divergence-stack overflow flag + relaunch
+make isa                   # MUL, vdot4.i8, JAL/JALR call-return, divergent JALR
 make regress               # everything above, same set as CI
 make lint                  # verilator -Wall (core + AXI wrapper) → 0 errors 0 warnings
 make lint-yosys            # yosys 0.65 elaboration check
@@ -38,7 +39,7 @@ make lint-yosys            # yosys 0.65 elaboration check
 | Layer | Mechanism | Status |
 |---|---|---|
 | Directed | `tb_smoke` 12 checks, `tb_simd` 14 per-lane checks | ✅ PASS |
-| CRV | `tb_rand` — constrained-random programs vs independent ISS, per-cycle PC/mask/WB compare, RF+dmem final-state compare | ✅ 3 seeds × 50 programs in CI |
+| CRV | `tb_rand` — constrained-random programs vs independent ISS, per-cycle PC/mask/WB compare, RF+dmem final-state compare | ✅ 3 seeds × 100 programs in CI (incl. MUL, vdot4, JAL/JALR) |
 | AXI | `tb_axi_smoke` protocol (sync-read memory, random B/R backpressure), `tb_axi_integration` with the real core, `tb_stk_ovf` | ✅ PASS |
 | UVM | 7-file env: CRV program generator (split/join statically balanced), instruction-level ISS scoreboard, 8 covergroups | ✅ delivered (sign-off on VCS/Xcelium) |
 | SVA | 15 assertions + 17 cover properties (stack bounds, mask contiguity, done quiescence, alignment) | ✅ bound |
