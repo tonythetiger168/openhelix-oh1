@@ -79,6 +79,21 @@ jobs:
             --top-module tb_axi_integration -Mdir obj_axiint -o Vtb_axi_int
           ./obj_axiint/Vtb_axi_int
 
+      - name: Synchronous-read memory mode (SYNC_MEM=1, BRAM timing)
+        run: |
+          C="rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv"
+          for t in tb_smoke tb_simd tb_isa_ext tb_stk_ovf; do
+            verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD -GSYNC_MEM=1 \
+              $C tb/$t.sv --top-module $t -Mdir obj_sync_$t -o V
+            ./obj_sync_$t/V
+          done
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD -GSYNC_MEM=1 \
+            $C rtl/oh1_axi_lite.sv tb/tb_axi_integration.sv --top-module tb_axi_integration -Mdir obj_sync_int -o V
+          ./obj_sync_int/V
+          verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD -GSYNC_MEM=1 \
+            $C tb/tb_rand.sv --top-module tb_rand -Mdir obj_sync_rand -o V
+          for s in 1 7 42; do ./obj_sync_rand/V +seed=$s +n_prog=100; done
+
       - name: Yosys elaboration check
         run: |
           mkdir -p sim
