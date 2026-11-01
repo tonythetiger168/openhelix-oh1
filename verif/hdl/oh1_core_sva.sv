@@ -7,7 +7,8 @@
 // =============================================================================
 module oh1_core_sva import oh1_pkg::*; #(
   parameter int LANES_P = 4,
-  parameter int STK_P   = 8
+  parameter int STK_P   = 8,
+  parameter int SYNC_MEM = 0
 ) (
   input logic                         clk_i,
   input logic                         rst_ni,
@@ -20,6 +21,10 @@ module oh1_core_sva import oh1_pkg::*; #(
   input logic                         ex_vld_q,
   input logic [31:0]                  if_pc_q,
   input logic [31:0]                  ex_pc_q,
+  input logic [31:0]                  if_pc_next_c,
+  input logic [31:0]                  imem_addr_o,
+  input logic                         lw_stall_c,
+  input logic                         lw_wait_q,
   input oh1_pkg::ikind_e              kind,
   input logic [4:0]                   rd_d,
   input logic                         ill_d,
@@ -169,6 +174,29 @@ module oh1_core_sva import oh1_pkg::*; #(
                                     |=> done_q && active_q);
   c_start_at_exit: cover property (start_i && live && (kind == I_WEXIT || kind == I_TEXIT));
   s_launch_restart_after_fault: cover property (launch && done_q && (ill_q || ovf_q));
+
+  // ---- synchronous-read memory timing (SYNC_MEM=1 build only) ----
+  if (SYNC_MEM != 0) begin : g_sync
+    // fetch runs one address ahead: imem_addr is exactly the PC the IF register takes next
+    a_fetch_ahead: assert property (imem_addr_o == if_pc_next_c);
+    a_fetch_next:  assert property (1'b1 |=> if_pc_q == $past(if_pc_next_c));
+    // LW: one stall cycle that issues the read and retires nothing, then the LW retires
+    a_lw_stall:  assert property (lw_stall_c |-> live && kind == I_LW && dmem_ren_o
+                                               && !exec_valid_o && !wb_valid_o && !dmem_wen_o);
+    a_lw_resume: assert property (lw_stall_c && !launch |=> lw_wait_q && exec_valid_o && kind == I_LW
+                                                           && !dmem_ren_o && $stable(ex_pc_q)
+                                                           && $stable(act_mask_q));
+    a_lw_once:   assert property (lw_wait_q |-> !lw_stall_c);
+    a_lw_wait_clear: assert property (lw_wait_q && !lw_stall_c |=> !lw_wait_q);
+    c_lw_stall:  cover property (lw_stall_c);
+    c_lw_resume: cover property (lw_stall_c && !launch);
+    c_lw_once:   cover property (lw_wait_q);
+    c_lw_wait_clear: cover property (lw_wait_q && !lw_stall_c);
+    s_lw_back_to_back:   cover property (lw_wait_q && exec_valid_o ##1 lw_stall_c);
+    s_lw_stall_no_lane:  cover property (lw_stall_c && act_mask_q == '0);
+    s_lw_stall_start:    cover property (lw_stall_c && start_i);
+    s_lw_after_redirect: cover property (live && redirect_en_c ##2 lw_stall_c);
+  end
 endmodule
 
-bind oh1_core oh1_core_sva #(.LANES_P(LANES_P), .STK_P(STK_P)) u_core_sva (.*);
+bind oh1_core oh1_core_sva #(.LANES_P(LANES_P), .STK_P(STK_P), .SYNC_MEM(SYNC_MEM)) u_core_sva (.*);

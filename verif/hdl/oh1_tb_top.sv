@@ -9,9 +9,15 @@
 // tb_start_inj_i is OR-ed onto the core start pin. The AXI wrapper never issues a
 // start while busy, so this is the only way to drive start_i into a running core
 // (the core must ignore it). Sequences only pulse it while a kernel is running.
+//
+// SYNC_MEM=0: combinational memory reads (the original timing).
+// SYNC_MEM=1: every memory read port is registered (BRAM timing): imem, all dmem
+// lanes and the wrapper's mem_rdata. The parameter is passed to oh1_core, which
+// then fetches one address ahead and stalls LW for one cycle. The regression
+// builds and runs both.
 // =============================================================================
 
-module oh1_tb_top import oh1_pkg::*; (
+module oh1_tb_top import oh1_pkg::*; #(parameter int SYNC_MEM = 0) (
   input  logic        clk,
   input  logic        rst_n,
   // AXI4-Lite slave
@@ -55,6 +61,7 @@ module oh1_tb_top import oh1_pkg::*; (
   output logic [4:0]  wb_rd,
   output logic [3:0]  wb_lane_mask,
   output logic [127:0] wb_data,
+  output logic        dmem_ren,
   output logic        dmem_wen,
   output logic [3:0]  dmem_wmask,
   output logic [127:0] dmem_waddr,
@@ -64,7 +71,6 @@ module oh1_tb_top import oh1_pkg::*; (
   localparam int MEM_W = 4096;
 
   logic [31:0] imem_addr, imem_rdata;
-  logic        dmem_ren;
   logic [31:0] dmem_raddr_a [LANES], dmem_rdata_a [LANES];
   logic [31:0] dmem_waddr_a [LANES], dmem_wdata_a [LANES];
   logic [31:0] wb_data_a [LANES];
@@ -72,13 +78,27 @@ module oh1_tb_top import oh1_pkg::*; (
 
   assign core_start = core_start_axi | tb_start_inj_i;
 
-  // ---- memories: combinational read, write at posedge (core first, AXI last) ----
+  // ---- memories: read comb (SYNC_MEM=0) or registered (SYNC_MEM=1, read-before-write),
+  //      write at posedge (core first, AXI last) ----
   logic [31:0] pmem [MEM_W];
   logic [31:0] dmem [MEM_W];
+  logic [31:0] mem_rdata_c;
 
-  assign imem_rdata = pmem[imem_addr[13:2]];
+  assign mem_rdata_c = mem_is_imem ? pmem[mem_addr[11:0]] : dmem[mem_addr[11:0]];
+  if (SYNC_MEM != 0) begin : g_rd_sync
+    always_ff @(posedge clk) begin
+      imem_rdata <= pmem[imem_addr[13:2]];
+      mem_rdata  <= mem_rdata_c;
+      for (int l = 0; l < LANES; l++) dmem_rdata_a[l] <= dmem[dmem_raddr_a[l][13:2]];
+    end
+  end else begin : g_rd_comb
+    assign imem_rdata = pmem[imem_addr[13:2]];
+    assign mem_rdata  = mem_rdata_c;
+    for (genvar g = 0; g < LANES; g++) begin : g_lane
+      assign dmem_rdata_a[g] = dmem[dmem_raddr_a[g][13:2]];
+    end
+  end
   for (genvar g = 0; g < LANES; g++) begin : g_lane_io
-    assign dmem_rdata_a[g]       = dmem[dmem_raddr_a[g][13:2]];
     assign wb_data[32*g +: 32]    = wb_data_a[g];
     assign dmem_waddr[32*g +: 32] = dmem_waddr_a[g];
     assign dmem_wdata[32*g +: 32] = dmem_wdata_a[g];
@@ -95,7 +115,6 @@ module oh1_tb_top import oh1_pkg::*; (
           else             dmem[mem_addr[11:0]][b*8 +: 8] <= mem_wdata[b*8 +: 8];
         end
   end
-  assign mem_rdata = mem_is_imem ? pmem[mem_addr[11:0]] : dmem[mem_addr[11:0]];
 
   oh1_axi_lite #(.LANES_P(LANES)) u_axi (
     .clk_i(clk), .rst_ni(rst_n),
@@ -110,7 +129,7 @@ module oh1_tb_top import oh1_pkg::*; (
     .mem_we_o(mem_we), .mem_wstrb_o(mem_wstrb), .mem_is_imem_o(mem_is_imem),
     .mem_addr_o(mem_addr), .mem_wdata_o(mem_wdata), .mem_rdata_i(mem_rdata));
 
-  oh1_core #(.LANES_P(LANES)) u_core (
+  oh1_core #(.LANES_P(LANES), .SYNC_MEM(SYNC_MEM)) u_core (
     .clk_i(clk), .rst_ni(rst_n),
     .start_i(core_start), .start_pc_i(core_start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),

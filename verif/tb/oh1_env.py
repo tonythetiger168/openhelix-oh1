@@ -6,6 +6,7 @@
    |                   compares all predicted outputs, publishes events
    +-- Oh1Coverage     functional covergroups (cocotb-coverage), fed by the scoreboard
 """
+import os
 import random
 
 import cocotb
@@ -13,7 +14,7 @@ from cocotb.triggers import RisingEdge, ReadOnly, Timer
 from pyuvm import (uvm_sequence_item, uvm_sequencer, uvm_driver, uvm_component, uvm_env,
                    uvm_analysis_port, ConfigDB)
 
-from oh1_isa import LANES, MASK32
+from oh1_isa import K, LANES, MASK32
 from oh1_ref_model import SocModel, AxiModel, decode_target, word_index, MEM_WORDS
 
 AXI_IN = ("awaddr", "awvalid", "wdata", "wstrb", "wvalid", "bready",
@@ -212,6 +213,11 @@ class CycleScoreboard(uvm_component):
         self.cycles = 0
         self.run_cycles = 0          # cycles since last launch (watchdog support)
         self.was_reset = True
+        # SYNC_MEM=1 build: registered memory reads (see hdl/oh1_tb_top.sv)
+        self.sync = int(os.environ.get("OH1_SYNC_MEM", "0")) != 0
+        self.prev_mem_rd = None      # SYNC_MEM: mem_rdata register = last cycle's read
+        self.lw_wait = False         # SYNC_MEM: an LW stalled last cycle, it retires now
+        self.n_lw_stall = 0
         ConfigDB().set(None, "*", "SCOREBOARD", self)
 
     def err(self, msg):
@@ -233,7 +239,7 @@ class CycleScoreboard(uvm_component):
         names = (AXI_IN + ("rst_n", "tb_start_inj_i") + AxiModel.OUTS
                  + ("core_start", "core_done", "core_illegal", "core_stk_ovf", "mem_rdata",
                     "exec_valid", "exec_pc", "exec_mask", "wb_valid", "wb_rd", "wb_lane_mask",
-                    "wb_data", "dmem_wen", "dmem_wmask", "dmem_waddr", "dmem_wdata"))
+                    "wb_data", "dmem_ren", "dmem_wen", "dmem_wmask", "dmem_waddr", "dmem_wdata"))
         for n in names:
             if n == "core_start_axi":
                 continue
@@ -266,14 +272,45 @@ class CycleScoreboard(uvm_component):
         co = m.core_outputs()
         for n, v in co.items():
             self.cmp(n, s[n], v)
-        mem_rd = m.mem_rdata()
-        self.cmp("mem_rdata", s["mem_rdata"], mem_rd)
+        cur_rd = m.mem_rdata()               # combinational read of this cycle's address
+        if self.sync:                        # registered: what was read at the last edge
+            mem_rd, self.prev_mem_rd = self.prev_mem_rd, cur_rd
+            if mem_rd is not None:
+                self.cmp("mem_rdata", s["mem_rdata"], mem_rd)
+            else:
+                mem_rd = s["mem_rdata"]
+        else:
+            mem_rd = cur_rd
+            self.cmp("mem_rdata", s["mem_rdata"], mem_rd)
         start = po["core_start_axi"] | s["tb_start_inj_i"]
         self.cmp("core_start", s["core_start"], start)
         if not s["rst_n"]:
-            for n in ("exec_valid", "wb_valid", "dmem_wen"):
+            for n in ("exec_valid", "wb_valid", "dmem_wen", "dmem_ren"):
                 self.cmp(n, s[n], 0)
+            self.lw_wait = False
+            c.lw_snap = None
             return
+
+        # ---------------- LW read port
+        live = c.active and not c.done
+        if s["dmem_ren"]:
+            if not live or c.next_kind() is not K.LW:
+                self.err(f"dmem_ren without a live LW (pc={c.pc:#x})")
+            elif self.sync:
+                if s["exec_valid"] or self.lw_wait:
+                    self.err("SYNC_MEM: LW read issued in a retiring cycle")
+                c.latch_lw()
+                self.n_lw_stall += 1
+            elif not s["exec_valid"]:
+                self.err("dmem_ren without exec_valid (combinational memory)")
+        elif s["exec_valid"] and live and c.next_kind() is K.LW and not self.sync:
+            self.err("LW retired without dmem_ren")
+        if self.sync:
+            if self.lw_wait and not s["exec_valid"]:
+                self.err("SYNC_MEM: LW did not retire in the cycle after its stall")
+            if s["exec_valid"] and live and c.next_kind() is K.LW and not self.lw_wait:
+                self.err("SYNC_MEM: LW retired without a stall cycle")
+            self.lw_wait = bool(s["dmem_ren"])
 
         flags = (c.done, c.ill, c.ovf)
         launch_ok = c.can_launch()           # decided on this cycle's state, before EX
@@ -359,7 +396,8 @@ class CycleScoreboard(uvm_component):
 
     def check_phase(self):
         self.logger.info(f"scoreboard: {self.cycles} cycles, {self.n_exec} instructions, "
-                         f"{self.checks} compares, {self.errors} mismatches")
+                         f"{self.checks} compares, {self.errors} mismatches"
+                         + (f", {self.n_lw_stall} LW stalls (SYNC_MEM)" if self.sync else ""))
         assert self.errors == 0, f"{self.errors} scoreboard mismatches"
         assert self.n_exec > 0 or not ConfigDB().get(None, "", "EXPECT_EXEC"), "no instructions executed"
 

@@ -4,10 +4,14 @@
   python verif/run.py --seeds 1 2 3 4 5 6 7 8 --gate   # sign-off regression (CI)
   python verif/run.py                       # quick regression (seeds 1..4)
   python verif/run.py --seeds 1 2 3 --n 60  # custom
-  python verif/run.py --tests Oh1SmokeTest --seeds 7
+  python verif/run.py --tests Oh1SmokeTest --seeds 7 --sync-mem 1
+
+Every seed runs on two builds of the harness: SYNC_MEM=0 (combinational memory reads)
+and SYNC_MEM=1 (registered reads, BRAM timing). --sync-mem picks one of them.
 
 Outputs (verif/out/):
-  seed_<s>/coverage.dat   Verilator code coverage of that run
+  seed_<s>/coverage.dat   Verilator code coverage of that run (SYNC_MEM=0)
+  seed_<s>_sync/...       the same seed on the SYNC_MEM=1 build
   seed_<s>/fcov.yml       functional coverage of that run
   report.md               merged coverage report (scripts/cov_report.py)
 """
@@ -47,31 +51,37 @@ def main():
     ap.add_argument("--fail-fast", action="store_true", help="stop at the first failing seed")
     ap.add_argument("--rtl-dir", default=str(ROOT / "rtl"), help="alternative RTL (mutation runs)")
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--sync-mem", type=int, nargs="+", default=[0, 1], choices=[0, 1],
+                    help="memory read timing builds to run (default: both)")
     a = ap.parse_args()
     out = Path(a.out)
     rtl = [Path(a.rtl_dir) / f for f in RTL_FILES]
 
     sys.path.insert(0, str(HERE / "tb"))     # the runner passes sys.path on as PYTHONPATH
     runner = get_runner("verilator")
-    build = out / "build"
-    runner.build(sources=rtl + HDL, hdl_toplevel="oh1_tb_top", build_args=BUILD_ARGS,
-                 build_dir=build, timescale=("1ns", "1ps"))
+    from cocotb_tools.check_results import get_results
     failed = []
-    for s in a.seeds:
-        d = out / f"seed_{s}"
-        d.mkdir(parents=True, exist_ok=True)
-        for f in ("coverage.dat", "fcov.yml"):
-            (d / f).unlink(missing_ok=True)
-        res = runner.test(test_module="test_oh1", hdl_toplevel="oh1_tb_top", testcase=a.tests,
-                          seed=s, build_dir=build, test_dir=d,
-                          extra_env={"OH1_N": str(a.n), "OH1_FCOV": str(d / "fcov.yml")},
-                          results_xml="results.xml")
-        from cocotb_tools.check_results import get_results
-        _, nfail = get_results(res)
-        if nfail:
-            failed.append(s)
-            if a.fail_fast:
-                break
+    for sm in a.sync_mem:
+        build = out / ("build_sync" if sm else "build")
+        runner.build(sources=rtl + HDL, hdl_toplevel="oh1_tb_top", build_args=BUILD_ARGS,
+                     parameters={"SYNC_MEM": sm}, build_dir=build, timescale=("1ns", "1ps"))
+        for s in a.seeds:
+            d = out / (f"seed_{s}_sync" if sm else f"seed_{s}")
+            d.mkdir(parents=True, exist_ok=True)
+            for f in ("coverage.dat", "fcov.yml"):
+                (d / f).unlink(missing_ok=True)
+            res = runner.test(test_module="test_oh1", hdl_toplevel="oh1_tb_top", testcase=a.tests,
+                              seed=s, build_dir=build, test_dir=d,
+                              extra_env={"OH1_N": str(a.n), "OH1_FCOV": str(d / "fcov.yml"),
+                                         "OH1_SYNC_MEM": str(sm)},
+                              results_xml="results.xml")
+            _, nfail = get_results(res)
+            if nfail:
+                failed.append(d.name)
+                if a.fail_fast:
+                    break
+        if failed and a.fail_fast:
+            break
     if not a.no_report:
         subprocess.run([sys.executable, str(HERE / "scripts" / "sv_check.py")], check=True)
         subprocess.run([sys.executable, str(HERE / "scripts" / "cov_report.py"), str(out)]

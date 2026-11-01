@@ -122,7 +122,7 @@ jobs:
       - name: pyslang elaboration + assertion inventory
         run: python verif/scripts/sv_check.py
 
-      - name: CRV regression (8 seeds x 6 tests) + coverage gate
+      - name: CRV regression (8 seeds x 6 tests x SYNC_MEM 0/1) + coverage gate
         run: python verif/run.py --seeds 1 2 3 4 5 6 7 8 --n 40 --gate
 
       - name: Upload coverage report

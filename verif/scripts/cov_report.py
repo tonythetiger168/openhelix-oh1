@@ -32,6 +32,11 @@ TYPES = {"v_line": "line", "v_branch": "branch", "v_expr": "expression", "v_togg
          "v_user": "user"}
 
 
+# Verilator suffixes the module name of a parameter-specialised module in the page field
+# (oh1_core -> oh1_core__SB1 in the SYNC_MEM=1 build); drop it so both builds merge
+PAGE_SPEC = re.compile("(\x01page\x02v_[a-z]+/[^\x01]*?)__S[A-Za-z0-9]+(?=\x01)")
+
+
 def load_dat(paths):
     merged = collections.OrderedDict()
     for p in paths:
@@ -39,6 +44,7 @@ def load_dat(paths):
             if not ln.startswith("C '"):
                 continue
             key, cnt = ln[3:].rstrip("\n").rsplit("' ", 1)
+            key = PAGE_SPEC.sub(r"\1", key)
             merged[key] = merged.get(key, 0) + int(cnt)
     return merged
 

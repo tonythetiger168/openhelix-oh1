@@ -72,6 +72,7 @@ class CoreISS:
         self.stk_mask = [0] * STK_DEPTH
         self.stk_pc = [0] * STK_DEPTH
         self.sp = 0
+        self.lw_snap = None      # SYNC_MEM: per-lane data latched in the LW stall cycle
 
     def can_launch(self):
         return (not self.active) or self.done
@@ -79,6 +80,18 @@ class CoreISS:
     def launch(self, pc):
         self.active, self.done, self.ill, self.ovf = True, False, False, False
         self.pc, self.act, self.sp = pc & MASK32, 0xF, 0
+        self.lw_snap = None
+
+    def next_kind(self):
+        """Kind of the instruction the core executes next (at self.pc)."""
+        return decode(self.imem[(self.pc >> 2) & IDX])[0]
+
+    def latch_lw(self):
+        """SYNC_MEM stall cycle of an LW: a registered memory captures every lane's word
+        now (before this cycle's writes commit); the LW retires next cycle with it."""
+        _, _, rs1, _, imm = decode(self.imem[(self.pc >> 2) & IDX])
+        self.lw_snap = [self.dmem[((((0 if rs1 == 0 else self.rf[l][rs1]) + imm) & MASK32) >> 2) & IDX]
+                        for l in range(LANES)]
 
     def step(self):
         """Execute the instruction at self.pc; returns an ExecRecord.
@@ -135,7 +148,9 @@ class CoreISS:
             r.wb_en, r.wb_mask = True, act
             for l in range(LANES):
                 if on[l]:
-                    r.wb_data[l] = self.dmem[(r.ld_addr[l] >> 2) & IDX]
+                    r.wb_data[l] = (self.lw_snap[l] if self.lw_snap is not None
+                                    else self.dmem[(r.ld_addr[l] >> 2) & IDX])
+            self.lw_snap = None
         elif k == K.SW:
             if act:
                 r.st_en, r.st_mask = True, act
