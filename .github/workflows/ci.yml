@@ -61,4 +61,3 @@ jobs:
           mkdir -p sim
           sv2v rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv > sim/oh1_core.v
           yosys -p 'read_verilog sim/oh1_core.v; hierarchy -check -top oh1_core; proc; check -assert'
-
