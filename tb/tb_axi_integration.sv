@@ -6,7 +6,7 @@
 // =============================================================================
 `timescale 1ns/1ps
 
-module tb_axi_integration;
+module tb_axi_integration #(parameter int SYNC_MEM = 0);
   import oh1_pkg::*;
 
   logic clk;
@@ -42,9 +42,17 @@ module tb_axi_integration;
   logic [31:0] pmem [4096];
   logic [31:0] dmem [4096];
 
-  always_comb imem_rdata = pmem[imem_addr[31:2] & 32'hFFF];
+  if (SYNC_MEM != 0) begin : g_imem_sync
+    always_ff @(posedge clk) imem_rdata <= pmem[imem_addr[31:2] & 32'hFFF];
+  end else begin : g_imem_comb
+    always_comb imem_rdata = pmem[imem_addr[31:2] & 32'hFFF];
+  end
   for (genvar g = 0; g < LANES; g++) begin : g_dmem_rd
-    always_comb dmem_rdata[g] = dmem[dmem_raddr[g][13:2] & 32'hFFF];
+    if (SYNC_MEM != 0) begin : g_sync
+      always_ff @(posedge clk) dmem_rdata[g] <= dmem[dmem_raddr[g][13:2] & 32'hFFF];
+    end else begin : g_comb
+      always_comb dmem_rdata[g] = dmem[dmem_raddr[g][13:2] & 32'hFFF];
+    end
   end
   always_ff @(posedge clk) begin
     if (dmem_wen)
@@ -75,7 +83,7 @@ module tb_axi_integration;
     .mem_we_o(mem_we), .mem_wstrb_o(mem_wstrb), .mem_is_imem_o(mem_is_imem),
     .mem_addr_o(mem_addr), .mem_wdata_o(mem_wdata), .mem_rdata_i(mem_rdata));
 
-  oh1_core #(.LANES_P(LANES)) core (
+  oh1_core #(.LANES_P(LANES), .SYNC_MEM(SYNC_MEM)) core (
     .clk_i(clk), .rst_ni(rst_n),
     .start_i(core_start), .start_pc_i(core_start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),
