@@ -11,7 +11,7 @@
 // =============================================================================
 `timescale 1ns/1ps
 
-module tb_simd;
+module tb_simd #(parameter int SYNC_MEM = 0);
   import oh1_pkg::*;
 
   localparam int N_CHK = 14;
@@ -37,9 +37,17 @@ module tb_simd;
   logic [31:0] pmem [4096];
   logic [31:0] dmem [4096];
 
-  always_comb imem_rdata = pmem[imem_addr[31:2] & 32'hFFF];
+  if (SYNC_MEM != 0) begin : g_imem_sync
+    always_ff @(posedge clk) imem_rdata <= pmem[imem_addr[31:2] & 32'hFFF];
+  end else begin : g_imem_comb
+    always_comb imem_rdata = pmem[imem_addr[31:2] & 32'hFFF];
+  end
   for (genvar gl = 0; gl < LANES; gl++) begin : g_dmem_rd
-    always_comb dmem_rdata[gl] = dmem[dmem_raddr[gl][13:2] & 32'hFFF];
+    if (SYNC_MEM != 0) begin : g_sync
+      always_ff @(posedge clk) dmem_rdata[gl] <= dmem[dmem_raddr[gl][13:2] & 32'hFFF];
+    end else begin : g_comb
+      always_comb dmem_rdata[gl] = dmem[dmem_raddr[gl][13:2] & 32'hFFF];
+    end
   end
   always_ff @(posedge clk) begin
     if (dmem_wen)
@@ -48,7 +56,7 @@ module tb_simd;
   end
 
   // ---- DUT ----
-  oh1_core #(.LANES_P(LANES)) dut (
+  oh1_core #(.LANES_P(LANES), .SYNC_MEM(SYNC_MEM)) dut (
     .clk_i(clk), .rst_ni(rst_n), .start_i(start), .start_pc_i(start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),
     .dmem_ren_o(dmem_ren), .dmem_raddr_o(dmem_raddr), .dmem_rdata_i(dmem_rdata),

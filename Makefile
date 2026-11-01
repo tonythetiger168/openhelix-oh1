@@ -23,7 +23,7 @@ VCS_OPTS += -cm line+tgl+fsm+cond+assert
 SIMV_COV := -cm line+tgl+fsm+cond+assert -cm_name $(TEST)_$(SEED)
 endif
 
-.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk isa regress uvm uvm-signoff
+.PHONY: sim cov lint lint-verilator lint-yosys tools-check clean smoke simd rand axi axi-int stk isa regress regress-sync uvm uvm-signoff
 
 # ---- 開源工具鏈（使用者空間，見 tools/manifest.txt）----
 # 使用: source tools/env.sh 後 make lint
@@ -114,6 +114,16 @@ isa: | sim/bin
 	  --top-module tb_isa_ext -Mdir /dev/shm/obj_isa -o Vtb_isa
 	cp /dev/shm/obj_isa/Vtb_isa sim/bin/ && rm -rf /dev/shm/obj_isa
 	./sim/bin/Vtb_isa
+
+# Same core benches with synchronous-read (BRAM-timed) memories
+regress-sync:
+	@for t in tb_smoke tb_simd tb_isa_ext tb_stk_ovf tb_rand; do \
+	  rm -rf /dev/shm/obj_sync_$$t; \
+	  verilator --binary --timing -j 4 -Wno-fatal -Wno-TIMESCALEMOD -GSYNC_MEM=1 \
+	    rtl/oh1_pkg.sv rtl/oh1_decode.sv rtl/oh1_core.sv tb/$$t.sv \
+	    --top-module $$t -Mdir /dev/shm/obj_sync_$$t -o V >/dev/null || exit 1; \
+	  /dev/shm/obj_sync_$$t/V +seed=1 +n_prog=100 || exit 1; \
+	done
 
 # Full open-source regression (same set as CI)
 regress: lint smoke simd axi axi-int stk isa

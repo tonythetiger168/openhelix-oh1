@@ -10,7 +10,12 @@
 // =============================================================================
 module oh1_core import oh1_pkg::*; #(
   parameter int LANES_P  = 4,
-  parameter int STK_P    = 8
+  parameter int STK_P    = 8,
+  // 0: combinational-read imem/dmem (original behaviour)
+  // 1: synchronous-read imem/dmem (FPGA BRAM / SRAM macro, 1-cycle read latency):
+  //    imem_addr_o carries the NEXT fetch PC so fetch stays bubble-free, and
+  //    LW takes one extra EX cycle (exec_valid_o low during the wait)
+  parameter int SYNC_MEM = 0
 ) (
   input  logic                      clk_i,
   input  logic                      rst_ni,
@@ -49,7 +54,10 @@ module oh1_core import oh1_pkg::*; #(
   logic [31:0] ir_q;
   logic [31:0] ex_pc_q;
 
-  assign imem_addr_o = if_pc_q;
+  logic [31:0] if_pc_next_c;    // value if_pc_q takes at the next edge
+  logic        lw_wait_q;       // SYNC_MEM: LW issued last cycle, data arrives now
+  logic        lw_stall_c;      // SYNC_MEM: first cycle of an LW, hold the pipeline
+  assign imem_addr_o = (SYNC_MEM != 0) ? if_pc_next_c : if_pc_q;
 
   // ---- 解碼（EX 階段）----
   ikind_e      kind;
@@ -194,6 +202,15 @@ module oh1_core import oh1_pkg::*; #(
   end
   logic        stk_full_c;    // push would exceed STK_P entries
   assign ex_live_c  = ex_vld_q && !done_q;
+  assign lw_stall_c = (SYNC_MEM != 0) && ex_live_c && (kind == I_LW) && !lw_wait_q;
+
+  always_comb begin
+    if (start_i && (!active_q || done_q))   if_pc_next_c = start_pc_i;
+    else if (!active_q || done_q)           if_pc_next_c = if_pc_q;
+    else if (redirect_en_c && ex_vld_q)     if_pc_next_c = redirect_pc_c;
+    else if (lw_stall_c)                    if_pc_next_c = if_pc_q;
+    else                                    if_pc_next_c = if_pc_q + 32'd4;
+  end
   assign stk_full_c = push_two_c ? (32'(stk_ptr_q) + 2 > STK_P) : (32'(stk_ptr_q) + 1 > STK_P);
 
   always_comb begin
@@ -233,7 +250,7 @@ module oh1_core import oh1_pkg::*; #(
         redirect_pc_c  = jalr_pc_c;
       end
       I_LW: begin
-        dmem_ren_o     = ex_live_c;
+        dmem_ren_o     = (SYNC_MEM != 0) ? lw_stall_c : ex_live_c;
         wb_en_c        = 1'b1;
         wb_lane_mask_c = act_mask_q;
       end
@@ -297,6 +314,7 @@ module oh1_core import oh1_pkg::*; #(
       done_q     <= 1'b0;
       ill_q      <= 1'b0;
       ovf_q      <= 1'b0;
+      lw_wait_q  <= 1'b0;
       for (int l = 0; l < LANES_P; l++)
         for (int r = 0; r < 32; r++) rf_q[l][r] <= 32'b0;
     end else begin
@@ -311,6 +329,7 @@ module oh1_core import oh1_pkg::*; #(
         done_q     <= 1'b0;
         ill_q      <= 1'b0;
         ovf_q      <= 1'b0;
+        lw_wait_q  <= 1'b0;
       end else if (!active_q) begin
         // idle: wait for start
       end else if (done_q) begin
@@ -320,7 +339,10 @@ module oh1_core import oh1_pkg::*; #(
         // 仍為 1（來源條件未被清除），不閘控會讓 IF/EX 永遠凍結（deadlock）
         if_pc_q  <= redirect_pc_c;
         ex_vld_q <= 1'b0;                        // flush 誤取指令（bubble）
+      end else if (lw_stall_c) begin
+        lw_wait_q <= 1'b1;                       // hold IF/EX one cycle for the sync LW read
       end else begin
+        lw_wait_q <= 1'b0;
         ir_q     <= imem_rdata_i;
         ex_pc_q  <= if_pc_q;
         ex_vld_q <= 1'b1;
@@ -328,7 +350,7 @@ module oh1_core import oh1_pkg::*; #(
       end
 
       // ---- EX stage ----
-      if (ex_vld_q && !done_q) begin
+      if (ex_vld_q && !done_q && !lw_stall_c) begin
         if (wb_en_c && (rd_d != 5'd0)) begin
           for (int l = 0; l < LANES_P; l++)
             if (wb_lane_mask_c[l]) rf_q[l][rd_d] <= wb_data_c[l];
@@ -357,10 +379,10 @@ module oh1_core import oh1_pkg::*; #(
     end
   end
 
-  assign exec_valid_o   = ex_vld_q && !done_q;
+  assign exec_valid_o   = ex_vld_q && !done_q && !lw_stall_c;
   assign exec_pc_o      = ex_pc_q;
   assign exec_mask_o    = act_mask_q;
-  assign wb_valid_o     = wb_en_c && ex_vld_q && !done_q && (rd_d != 5'd0);   // x0 writes are not architectural
+  assign wb_valid_o     = wb_en_c && ex_vld_q && !done_q && !lw_stall_c && (rd_d != 5'd0);   // x0 writes are not architectural
   assign wb_rd_o        = rd_d;
   assign wb_lane_mask_o = wb_lane_mask_c;
   assign done_o         = done_q;

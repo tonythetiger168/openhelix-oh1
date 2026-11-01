@@ -8,7 +8,7 @@
 // =============================================================================
 `timescale 1ns/1ps
 
-module tb_stk_ovf;
+module tb_stk_ovf #(parameter int SYNC_MEM = 0);
   import oh1_pkg::*;
 
   logic clk = 1'b0;
@@ -18,7 +18,11 @@ module tb_stk_ovf;
 
   logic [31:0] imem_addr, imem_rdata;
   logic [31:0] pmem [128];
-  assign imem_rdata = pmem[imem_addr[8:2]];
+  if (SYNC_MEM != 0) begin : g_imem_sync
+    always_ff @(posedge clk) imem_rdata <= pmem[imem_addr[8:2]];
+  end else begin : g_imem_comb
+    always_comb imem_rdata = pmem[imem_addr[8:2]];
+  end
 
   logic        dmem_ren, dmem_wen;
   lane_mask_t  dmem_wmask, exec_mask, wb_lane_mask;
@@ -30,7 +34,7 @@ module tb_stk_ovf;
     assign dmem_rdata[g] = 32'b0;
   end
 
-  oh1_core #(.LANES_P(LANES)) dut (
+  oh1_core #(.LANES_P(LANES), .SYNC_MEM(SYNC_MEM)) dut (
     .clk_i(clk), .rst_ni(rst_n), .start_i(start), .start_pc_i(start_pc),
     .imem_addr_o(imem_addr), .imem_rdata_i(imem_rdata),
     .dmem_ren_o(dmem_ren), .dmem_raddr_o(dmem_raddr), .dmem_rdata_i(dmem_rdata),

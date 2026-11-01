@@ -16,6 +16,7 @@ OH-1 brings **GPU warp semantics** (split / join / tmc) into a 2-stage-pipeline,
 - **Low power by construction** — per-lane operand isolation: dynamic power scales with active-lane count
 - **AXI4-Lite peripheral wrapper** — independent AW/W, WSTRB, SLVERR/DECERR, VERSION/CAP, W1C IRQ, relaunch without reset ([register map](doc/axi_lite_regmap.md))
 - **Per-lane store strobe** — `dmem_wmask_o`: masked-off lanes never write memory
+- **BRAM-ready memories** — `SYNC_MEM=1` drives the next fetch PC so synchronous-read imem stays bubble-free; LW takes one extra cycle. Every core bench runs in both modes in CI
 
 ## Quick start
 
@@ -29,6 +30,7 @@ make axi                   # AXI4-Lite protocol: AW/W ordering, backpressure, WS
 make axi-int               # AXI + core: load, start, relaunch, divergent store, IRQ
 make stk                   # divergence-stack overflow flag + relaunch
 make isa                   # MUL, vdot4.i8, JAL/JALR call-return, divergent JALR
+make regress-sync          # core benches again with SYNC_MEM=1 (synchronous-read memories)
 make regress               # everything above, same set as CI
 make lint                  # verilator -Wall (core + AXI wrapper) → 0 errors 0 warnings
 make lint-yosys            # yosys 0.65 elaboration check
