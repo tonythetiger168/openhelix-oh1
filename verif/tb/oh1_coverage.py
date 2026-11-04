@@ -3,6 +3,8 @@
 Every bin listed here is reachable; impossible combinations are removed with
 ign_bins and listed in verif/doc/coverage_exclusions.md.
 """
+import os
+
 from cocotb_coverage.coverage import CoverPoint, CoverCross, coverage_db
 from pyuvm import uvm_component, uvm_subscriber
 
@@ -213,6 +215,154 @@ def cov_illegal(r):
     pass
 
 
+# ----------------------------------------------------------------------------- sequences
+# Temporal coverage over the executed instruction stream: read-after-write between
+# neighbours, load-use distance, same-address memory ordering and what follows a
+# control transfer (IF flush; SYNC_MEM fetch-ahead). The memory-timing build is part of
+# the bin where the RTL behaves differently (registered LW read, one stall cycle), so
+# closure needs both builds; cov_report merges them.
+S = "oh1.exec.seq."
+MODE = "sync" if os.environ.get("OH1_SYNC_MEM", "0") == "1" else "comb"
+MODES = ["comb", "sync"]
+
+
+def kclass(k):
+    if k in (K.MUL,):
+        return "mul"
+    if k.name in ALU_K:
+        return "alu"
+    return {K.VDOT4: "vdot", K.LUI: "upper", K.AUIPC: "upper", K.LW: "lw", K.SW: "sw",
+            K.BEQ: "br", K.BNE: "br", K.BLT: "br", K.BGE: "br", K.JAL: "jump", K.JALR: "jump",
+            K.SPLIT: "split", K.JOIN: "join", K.TMC: "tmc", K.CSRR: "csr", K.BAR: "bar",
+            K.WEXIT: "exit", K.TEXIT: "exit"}.get(k, "ill")
+
+
+def producer(r):
+    """Class of the value r writes, or None if it writes no register."""
+    if not (r.wb_en and r.rd and r.wb_mask) or r.illegal:
+        return None
+    if r.kind in (K.JAL, K.JALR):
+        return "link"
+    return kclass(r.kind)
+
+
+def reads(r):
+    """(register, consumer role) pairs an instruction actually reads."""
+    k = r.kind
+    if r.illegal and not r.jalr_div:
+        return []
+    if k == K.MUL:
+        return [(r.rs1, "mul"), (r.rs2, "mul")]
+    if k in R_OPS:
+        return [(r.rs1, "alu_a"), (r.rs2, "alu_b")]
+    if k in I_OPS:
+        return [(r.rs1, "alu_a")]
+    return {K.LW: [(r.rs1, "lw_base")], K.SW: [(r.rs1, "sw_base"), (r.rs2, "sw_data")],
+            K.JALR: [(r.rs1, "jalr")], K.SPLIT: [(r.rs1, "split")], K.TMC: [(r.rs1, "tmc")],
+            K.VDOT4: [(r.rs1, "vdot"), (r.rs2, "vdot"), (r.rd, "vdot")],
+            K.BEQ: [(r.rs1, "br"), (r.rs2, "br")], K.BNE: [(r.rs1, "br"), (r.rs2, "br")],
+            K.BLT: [(r.rs1, "br"), (r.rs2, "br")], K.BGE: [(r.rs1, "br"), (r.rs2, "br")]}.get(k, [])
+
+
+PRODUCERS = ["alu", "mul", "vdot", "upper", "lw", "csr", "link"]
+CONSUMERS = ["alu_a", "alu_b", "mul", "vdot", "lw_base", "sw_base", "sw_data", "br", "split",
+             "tmc", "jalr"]
+# a JALR base must be warp-uniform and point into the program; loaded, vdot and lane-id
+# values are neither (a divergent JALR is covered by oh1.exec.jump.jalr_div)
+RAW_IGN = [("lw", "jalr"), ("vdot", "jalr"), ("csr", "jalr")]
+REDIRS = ["br_taken", "jal", "jalr", "split_else", "join_else"]
+NEXTS = ["alu", "lw", "sw", "br", "jump", "split", "join", "tmc", "exit"]
+MEMPAIRS = ["sw_lw", "sw_sw", "lw_sw"]
+
+
+@CoverPoint(S + "raw.prod", xf=lambda p, c: p, bins=PRODUCERS)
+@CoverPoint(S + "raw.cons", xf=lambda p, c: c, bins=CONSUMERS)
+@CoverCross(S + "raw.prod_x_cons", items=[S + "raw.prod", S + "raw.cons"], ign_bins=RAW_IGN)
+def cov_raw(p, c):
+    pass
+
+
+@CoverPoint(S + "lw_use.dist", xf=lambda d: (d, MODE), bins=[(d, m) for d in (1, 2, 3) for m in MODES])
+def cov_lw_use(d):
+    pass
+
+
+@CoverPoint(S + "mem.order", xf=lambda pair, d: (pair, d, MODE),
+            bins=[(p, d, m) for p in MEMPAIRS for d in (1, 2) for m in MODES])
+def cov_mem_order(pair, d):
+    pass
+
+
+@CoverPoint(S + "redir.type", xf=lambda t, n: t, bins=REDIRS)
+@CoverPoint(S + "redir.next", xf=lambda t, n: n, bins=NEXTS)
+@CoverCross(S + "redir.type_x_next", items=[S + "redir.type", S + "redir.next"])
+@CoverPoint(S + "redir.lw_mode", xf=lambda t, n: (t, MODE) if n == "lw" else None,
+            bins=[(t, m) for t in REDIRS for m in MODES])
+def cov_redir(t, n):
+    pass
+
+
+def redir_type(r):
+    if not r.redirect or r.illegal:
+        return None
+    if r.kind in BR_OPS:
+        return "br_taken"
+    return {K.JAL: "jal", K.JALR: "jalr", K.SPLIT: "split_else", K.JOIN: "join_else"}.get(r.kind)
+
+
+class SeqTracker:
+    """Keeps the last few executed instructions of the running kernel."""
+    DEPTH = 3
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.hist = []           # newest last
+        self.lw_pend = None      # (rd, lanes written, distance so far)
+
+    def sample(self, r):
+        h = self.hist
+        if h:
+            p = h[-1]
+            pc = producer(p)
+            if pc:
+                for reg, role in reads(r):
+                    if reg == p.rd and (r.mask & p.wb_mask or role == "tmc"):
+                        cov_raw(pc, role)
+            t = redir_type(p)
+            if t:
+                n = kclass(r.kind)
+                if n in NEXTS:
+                    cov_redir(t, n)
+        # load-use distance (first reader of a loaded register within 3 instructions)
+        if self.lw_pend:
+            rd, lanes_w, d = self.lw_pend
+            d += 1
+            if any(reg == rd for reg, _ in reads(r)) and (r.mask & lanes_w):
+                cov_lw_use(d)
+                self.lw_pend = None
+            elif d >= 3 or (r.wb_en and r.rd == rd):
+                self.lw_pend = None
+            else:
+                self.lw_pend = (rd, lanes_w, d)
+        if r.kind == K.LW and r.rd and r.mask and not r.illegal:
+            self.lw_pend = (r.rd, r.mask, 0)
+        # same-word memory ordering at distance 1 and 2
+        if r.kind in (K.LW, K.SW) and r.mask:
+            for d, q in enumerate(reversed(h[-2:]), 1):
+                pair = {(K.SW, K.LW): "sw_lw", (K.SW, K.SW): "sw_sw",
+                        (K.LW, K.SW): "lw_sw"}.get((q.kind, r.kind))
+                if pair and q.mask and not q.illegal:
+                    if any((r.mask >> l) & (q.mask >> l) & 1 and
+                                    (r.ld_addr[l] >> 2) & 0xFFF == (q.ld_addr[l] >> 2) & 0xFFF
+                                    for l in range(LANES)):
+                        cov_mem_order(pair, d)
+        h.append(r)
+        if len(h) > self.DEPTH:
+            h.pop(0)
+
+
 # ----------------------------------------------------------------------------- events
 E = "oh1.soc."
 REG_BINS = ["CTRL", "STATUS", "PROG_BASE", "DATA_BASE", "PROG_LEN", "IRQ_STAT", "VERSION", "CAP",
@@ -336,14 +486,18 @@ class Oh1Coverage(uvm_component):
     def build_phase(self):
         self.exec_sub = _Sub("exec_sub", self, self.on_exec)
         self.ev_sub = _Sub("ev_sub", self, self.on_event)
+        self.seq = SeqTracker()
 
     def on_exec(self, r):
         for cond, fn in EXEC_SAMPLERS:
             if cond(r):
                 fn(r)
+        self.seq.sample(r)
 
     def on_event(self, e):
         k = e.kind
+        if k in ("launch", "reset", "exit"):
+            self.seq.clear()
         if k == "axi_write":
             cov_axi_write(e)
             if e.target == "reg":

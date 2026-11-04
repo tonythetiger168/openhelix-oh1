@@ -71,8 +71,9 @@ def main():
     uniq = {(p["kind"], p["label"], p["file"], p["line"]): p for p in props}
     out = dict(warnings=len(diags), errors=0, properties=list(uniq.values()),
                property_instances=len(props), rtl_calls=sorted(rtl_calls), pkg_helpers=helpers)
-    (HERE / "out").mkdir(exist_ok=True)
-    (HERE / "out" / "sv_inventory.json").write_text(json.dumps(out, indent=1))
+    dst = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "out"
+    dst.mkdir(parents=True, exist_ok=True)
+    (dst / "sv_inventory.json").write_text(json.dumps(out, indent=1))
     na = sum(p["kind"] == "Assert" for p in uniq.values())
     nc = sum(p["kind"] == "CoverProperty" for p in uniq.values())
     print(f"pyslang: 0 errors, {len(diags)} warnings; {na} assertions, {nc} cover properties; "

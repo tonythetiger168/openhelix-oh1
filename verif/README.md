@@ -21,6 +21,8 @@ python -m pip install -r verif/requirements.txt
 source verif/tools/setup_verilator.sh            # puts a repaired Verilator on PATH
 python verif/run.py --seeds 1 2 3 4 5 6 7 8 --n 40 --gate   # sign-off regression, both builds
 python verif/run.py --tests Oh1SmokeTest --seeds 1 --sync-mem 1   # quick check, one build
+python verif/run.py --seeds 1 2 --close 4                     # add coverage-driven seeds until 100%
+python verif/scripts/cdv_compare.py --seeds 1 2 3 4 5 6 7 8   # closure curve: CDV vs plain CRV
 python verif/scripts/mutation_check.py                      # does the TB catch RTL bugs?
 ```
 
@@ -85,7 +87,81 @@ illegal encodings of every class, exits from divergent paths and kernels that ne
 `PROG_BASE` is randomised over the full 32-bit range (including odd values).
 
 Tests: `Oh1SmokeTest` (directed), `Oh1CrvTest`, `Oh1SimtStressTest`, `Oh1FaultTest`,
-`Oh1AxiTest`, `Oh1StackClosureTest` (directed-random closure for deep stack entries).
+`Oh1AxiTest`, `Oh1StackClosureTest` (directed-random closure for deep stack entries),
+`Oh1CdvTest` (coverage-driven closure loop, below). `Oh1CdvBaselineTest` is the same loop
+with feedback off and is only used by `scripts/cdv_compare.py`.
+
+## Coverage-driven closure (CDV)
+
+Plain CRV draws every kernel from fixed weights and waits for rare bins to come up; the
+earlier closure work here was done by hand (re-weighting knobs, writing
+`Oh1StackClosureTest`). `tb/oh1_cdv.py` closes that loop inside the simulation:
+
+```
+ClosureLoop (Oh1CdvTest)
+  every batch of 4 kernels:
+    holes  <- uncovered bins, read live from the cocotb-coverage DB
+              (bins tagged for the other SYNC_MEM build are skipped: unreachable here)
+    plan   <- per hole, one of
+              * a directed construct ProgGen.c_<name>(*args) that produces exactly that bin
+                (target_for(): hazard(prod, cons, gap), memord(pair, dist), redir(kind, next),
+                 masked(kind, lanes), mask_to(m), stack_at(tail, depth), tmc_at(arg, before),
+                 alu_vals(kind, a, b), br_cond(kind, cond), alu_to(kind, rd), fault_exit(how, fault), ...)
+              * a weight boost on the generator knobs of that cover group (saturating)
+              * a bus-level action for SoC groups (register sweep, mid-run / idle reset,
+                more side traffic, fault exit mix)
+    run    <- kernels drawn from the re-weighted knobs; ~half of the constructs are targets
+    credit <- every emitted target counts as one try for its holes; a hole still open after
+              4 tries is demoted ("stubborn") so it cannot starve the rest, and retried
+              once everything else is closed
+  stop at local closure or after OH1_CDV_BUDGET kernels (default 2 x OH1_N)
+```
+
+Targets are still random inside (registers, data, addresses, PROG_BASE, handshake timing,
+side traffic) and every kernel is checked cycle by cycle by the scoreboard; the loop only
+moves probability toward what is not covered. `cdv_curve.json` in each run directory has
+the per-batch curve and the holes left.
+
+`run.py --close N` is the outer loop across simulations: if the merged report misses the
+gate, it runs `Oh1CdvTest` on two more seeds per round (both builds) and re-reports, up to
+N rounds.
+
+### Does the feedback help? (`scripts/cdv_compare.py`, `verif/cdv_compare.md`)
+
+Same loop, same batch size, same 160-kernel budget, 8 seeds per build, each run alone in its
+own simulation; "plain CRV" is `Oh1CdvBaselineTest` (feedback off, default constraints,
+which already include random hazard / memory-order / redirect constructs):
+
+| SYNC_MEM | Generator | kernels to 90% | to 99% | to 100% | bins at 160 kernels (median) |
+|---|---|---:|---:|---:|---:|
+| 0 | plain CRV | never (0/8) | never | never | 836 / 953 |
+| 0 | coverage-driven | 44 | 68 | 92 (6/8 runs) | 953 / 953 |
+| 1 | plain CRV | never (0/8) | never | never | 833 / 953 |
+| 1 | coverage-driven | 44 | 68 | 116 (2/8 runs) | 952 / 953 |
+
+Part of the gap is the bus actions (plain CRV never runs a register/strobe sweep, so
+`oh1.soc.wr.reg_x_strb` stays open), but plain CRV also leaves ~25 RAW pairs, deep-stack,
+TMC, exit x fault and redirect bins open per seed, which the directed targets close.
+What the loop alone still misses at 160 kernels: `soc.start_ignored at_exit` (a start
+pulse in the exact cycle of an exit; no directed construct, the side traffic hits it by
+chance) and a few bins per SYNC_MEM=1 seed. The sign-off regression gets them from the other
+tests and seeds; `run.py --close` adds CDV seeds if a merged run ever misses one.
+
+### Sequence coverage added with it (`oh1.exec.seq.*`, 179 bins)
+
+The pairwise/temporal behaviour of the IF/EX pipeline was not in the functional model:
+
+| Cover item | Bins | What |
+|---|---:|---|
+| `raw.prod_x_cons` (+ `raw.prod`, `raw.cons`) | 74 (+18) | instruction N+1 reads the register instruction N wrote: producer {alu, mul, vdot, lui/auipc, lw, csr, jal/jalr link} x consumer operand {alu rs1, alu rs2, mul, vdot (incl. accumulator), lw base, sw base, sw data, branch, split predicate, tmc, jalr base}; lw/vdot/csr -> jalr ignored (base would not be uniform or in the program) |
+| `lw_use.dist` | 6 | first use of a loaded register 1 / 2 / 3 instructions later, per build |
+| `mem.order` | 12 | store->load, store->store, load->store to the same word (some lane), distance 1 / 2, per build (SYNC_MEM=1 issues the LW read in the stall cycle) |
+| `redir.type_x_next` (+ `type`, `next`) | 45 (+14) | control transfer {taken branch, jal, jalr, all-false split, join to else} x class of the instruction at the target (IF flush / fetch-ahead) |
+| `redir.lw_mode` | 10 | LW right after each kind of transfer, per build |
+
+New SVA (in `oh1_core_sva.sv`): scenario covers `s_raw_rs1`, `s_raw_rs2`, `s_raw_lw_use`,
+`s_st_then_ld`, `s_st_then_st`, `s_ld_then_st`, and per-lane assertion `a_rf_write` (every
+register write lands in exactly the written lanes' RF, with antecedent cover `c_rf_write`).
 
 ## Metrics and how each is measured
 
@@ -96,8 +172,8 @@ Tests: `Oh1SmokeTest` (directed), `Oh1CrvTest`, `Oh1SimtStressTest`, `Oh1FaultTe
 | expression (condition) | Verilator `--coverage-expr` | `rtl/*.sv` |
 | toggle | Verilator `--coverage-toggle`, every bit of every RTL signal incl. RF and stack arrays, both directions | `rtl/*.sv` |
 | FSM | `f_*` cover properties: every state and legal arc of the core control FSM `{active_q,done_q}`, the AXI read FSM `rd_state`, the AW/W holding FSM and `busy_q`, including reset arcs; illegal states/arcs are assertions | bind modules |
-| SVA | 57 assertions (any failure fails the test) + 77 cover properties; every conditional assertion has a `c_*` cover on its antecedent so vacuity is visible | bind modules |
-| functional | 788 bins in `tb/oh1_coverage.py` (instruction × active lanes, operand classes, branch outcome × divergence, split type × stack depth, join type, TMC, LSU patterns, jumps, illegal classes, AXI window × response × busy, register × strobe, CTRL, launch, reset, IRQ, exit × fault) | scoreboard |
+| SVA | 58 assertions (any failure fails the test) + 84 cover properties; every conditional assertion has a `c_*` cover on its antecedent so vacuity is visible | bind modules |
+| functional | 967 bins in `tb/oh1_coverage.py` (instruction × active lanes, operand classes, branch outcome × divergence, split type × stack depth, join type, TMC, LSU patterns, jumps, illegal classes, AXI window × response × busy, register × strobe, CTRL, launch, reset, IRQ, exit × fault, and the `seq.*` pipeline sequences: RAW producer × consumer, load-use distance, same-word memory ordering, redirect × next) | scoreboard |
 
 FSM note: Verilator's `--coverage-fsm` is enabled but extracts 0 points from this RTL.
 `oh1_core` has no enum state register, and in `oh1_axi_lite` Verilator instruments only the
@@ -105,7 +181,7 @@ first enum-typed `case` of an always block, which is the address decoder, not `r
 Adding `/*verilator fsm_state*/` to `rd_state` in the RTL would enable the tool path; it was
 not done here to keep `rtl/` unchanged.
 
-## Results (8 seeds × 6 tests × 2 builds, `--n 40`)
+## Results (8 seeds × 7 tests × 2 builds, `--n 40`)
 
 See `verif/out/report.md` after a run; CI uploads it as the `oh1-coverage` artifact.
 At the time of the PR:
@@ -117,16 +193,17 @@ At the time of the PR:
 | expression | 184 / 184 | 100% | 91.54% |
 | toggle | 13900 / 13900 | 100% | 97.04% |
 | FSM states + arcs | 34 / 34 | 100% | 100% |
-| SVA covers | 77 / 77 | 100% | 100% (57 assertions, 0 failures, 0 vacuous) |
-| functional | 788 / 788 | 100% | 100% |
+| SVA covers | 84 / 84 | 100% | 100% (58 assertions, 0 failures, 0 vacuous) |
+| functional | 967 / 967 | 100% | 100% (788 + 179 sequence bins) |
 
 ## Does it catch bugs? (mutation check)
 
-`scripts/mutation_check.py` applies 10 one-line RTL bugs (SLTU signedness, branch
+`scripts/mutation_check.py` applies 12 one-line RTL bugs (SLTU signedness, branch
 uniformity, stack-full off-by-one, store mask, vdot4 accumulator, IRQ W1C, imem write
-protection, STATUS.done masking, SRAI decode, JALR divergence) to a copy of `rtl/` and runs
-the sign-off regression on each. Result: **10/10 killed** (`verif/mutation_report.md`),
-nine by the cycle scoreboard and the stack off-by-one by assertion `a_stk_bound`.
+protection, STATUS.done masking, SRAI decode, JALR divergence, TMC argument masked by lane 0's
+active bit, SYNC_MEM fetch-ahead ignoring the LW stall) to a copy of `rtl/` and runs the
+sign-off regression on each. Result: **12/12 killed** (`verif/mutation_report.md`), by the
+cycle scoreboard or by assertions (`a_stk_bound`, `a_fetch_next`).
 
 ## Exclusions
 

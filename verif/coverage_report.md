@@ -1,6 +1,6 @@
 # OH-1 coverage report
 
-Runs merged: seed_1, seed_1_sync, seed_2, seed_2_sync, seed_3, seed_3_sync, seed_4, seed_4_sync, seed_5, seed_5_sync, seed_6, seed_6_sync, seed_7, seed_7_sync, seed_8, seed_8_sync | tests: 96 | failing tests: 0
+Runs merged: seed_1, seed_1_sync, seed_2, seed_2_sync, seed_3, seed_3_sync, seed_4, seed_4_sync, seed_5, seed_5_sync, seed_6, seed_6_sync, seed_7, seed_7_sync, seed_8, seed_8_sync | tests: 112 | failing tests: 0
 
 | Metric | Points | Excluded | Covered / eligible | Coverage | Raw (no exclusions) |
 |---|---:|---:|---:|---:|---:|
@@ -9,10 +9,10 @@ Runs merged: seed_1, seed_1_sync, seed_2, seed_2_sync, seed_3, seed_3_sync, seed
 | expression | 201 | 17 | 184 / 184 | **100.00%** | 91.54% |
 | toggle | 14324 | 424 | 13900 / 13900 | **100.00%** | 97.04% |
 | FSM states+arcs (f_* covers) | 34 | 0 | 34 / 34 | **100.00%** | 100.00% |
-| SVA cover properties | 77 | 0 | 77 / 77 | **100.00%** | 100.00% |
-| functional bins (cocotb-coverage) | 788 | 0 | 788 / 788 | **100.00%** | 100.00% |
+| SVA cover properties | 84 | 0 | 84 / 84 | **100.00%** | 100.00% |
+| functional bins (cocotb-coverage) | 967 | 0 | 967 / 967 | **100.00%** | 100.00% |
 
-SVA: 57 assertions (57 instances incl. generate copies), 0 failing tests (a failing assertion stops the simulation and fails the test). Vacuous assertions (antecedent cover never hit): none. Assertions without an antecedent cover (unconditional invariants): a_awready, a_fetch_ahead, a_fetch_next, a_fsm_arcs, a_fsm_arcs_run, a_fsm_legal, a_irq_level, a_one_read, a_rd_idle_arcs, a_rd_legal, a_stk_bound, a_wr_arcs, a_wready, a_x0_zero.
+SVA: 58 assertions (58 instances incl. generate copies), 0 failing tests (a failing assertion stops the simulation and fails the test). Vacuous assertions (antecedent cover never hit): none. Assertions without an antecedent cover (unconditional invariants): a_awready, a_fetch_ahead, a_fetch_next, a_fsm_arcs, a_fsm_arcs_run, a_fsm_legal, a_irq_level, a_one_read, a_rd_idle_arcs, a_rd_legal, a_stk_bound, a_wr_arcs, a_wready, a_x0_zero.
 
 FSM: Verilator `--coverage-fsm` extracted 0 points from this RTL (see the exclusions doc); FSM coverage is measured with explicit state/arc cover properties.
 
@@ -52,6 +52,7 @@ FSM: Verilator `--coverage-fsm` extracted 0 points from this RTL (see the exclus
 | oh1.exec.lsu | 26 / 26 | 100.00% |
 | oh1.exec.mask | 16 / 16 | 100.00% |
 | oh1.exec.mul | 4 / 4 | 100.00% |
+| oh1.exec.seq | 179 / 179 | 100.00% |
 | oh1.exec.shift | 43 / 43 | 100.00% |
 | oh1.exec.split | 38 / 38 | 100.00% |
 | oh1.exec.tmc | 41 / 41 | 100.00% |
