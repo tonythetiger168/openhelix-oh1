@@ -126,6 +126,27 @@ the per-batch curve and the holes left.
 gate, it runs `Oh1CdvTest` on two more seeds per round (both builds) and re-reports, up to
 N rounds.
 
+### Does the feedback help? (`scripts/cdv_compare.py`, `verif/cdv_compare.md`)
+
+Same loop, same batch size, same 160-kernel budget, 8 seeds per build, each run alone in its
+own simulation; "plain CRV" is `Oh1CdvBaselineTest` (feedback off, default constraints,
+which already include random hazard / memory-order / redirect constructs):
+
+| SYNC_MEM | Generator | kernels to 90% | to 99% | to 100% | bins at 160 kernels (median) |
+|---|---|---:|---:|---:|---:|
+| 0 | plain CRV | never (0/8) | never | never | 836 / 953 |
+| 0 | coverage-driven | 44 | 68 | 92 (6/8 runs) | 953 / 953 |
+| 1 | plain CRV | never (0/8) | never | never | 833 / 953 |
+| 1 | coverage-driven | 44 | 68 | 116 (2/8 runs) | 952 / 953 |
+
+Part of the gap is the bus actions (plain CRV never runs a register/strobe sweep, so
+`oh1.soc.wr.reg_x_strb` stays open), but plain CRV also leaves ~25 RAW pairs, deep-stack,
+TMC, exit x fault and redirect bins open per seed, which the directed targets close.
+What the loop alone still misses at 160 kernels: `soc.start_ignored at_exit` (a start
+pulse in the exact cycle of an exit; no directed construct, the side traffic hits it by
+chance) and a few bins per SYNC_MEM=1 seed. The sign-off regression gets them from the other
+tests and seeds; `run.py --close` adds CDV seeds if a merged run ever misses one.
+
 ### Sequence coverage added with it (`oh1.exec.seq.*`, 179 bins)
 
 The pairwise/temporal behaviour of the IF/EX pipeline was not in the functional model:

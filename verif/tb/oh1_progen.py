@@ -715,9 +715,15 @@ class ProgGen:
                 got = "all" if all(c) else "none" if not any(c) else "some"
                 if got == cond:
                     opts.append((v, swap))
+        c = [f(t, t) for t in range(LANES)]           # tid against itself
+        if ("all" if all(c) else "none") == cond:
+            opts.append((None, False))
         v, swap = r.choice(opts)
-        self.emit(enc_i(K.ADDI, X_TMP, 0, v))
-        a, b = (X_TMP, X_TID) if swap else (X_TID, X_TMP)
+        if v is None:
+            a = b = X_TID
+        else:
+            self.emit(enc_i(K.ADDI, X_TMP, 0, v))
+            a, b = (X_TMP, X_TID) if swap else (X_TID, X_TMP)
         self.emit(enc_b(kk, a, b, 8))
         self.skip(1)
 

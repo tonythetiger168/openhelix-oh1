@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--out", default=str(HERE / "out" / "cdv"))
     ap.add_argument("--rtl-dir", default=str(R.ROOT / "rtl"))
     ap.add_argument("--report-only", action="store_true")
+    ap.add_argument("--resume", action="store_true", help="skip runs that already have a curve")
     a = ap.parse_args()
     out = Path(a.out)
     rtl = [Path(a.rtl_dir) / f for f in R.RTL_FILES]
@@ -65,6 +66,8 @@ def main():
             for t in TESTS:
                 for s in a.seeds:
                     d = out / f"{t}_s{s}_{'sync' if sm else 'comb'}"
+                    if a.resume and (d / "cdv_curve.json").exists():
+                        continue
                     d.mkdir(parents=True, exist_ok=True)
                     runner.test(test_module="test_oh1", hdl_toplevel="oh1_tb_top", testcase=[t],
                                 seed=s, build_dir=build, test_dir=d,
