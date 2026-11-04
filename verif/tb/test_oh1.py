@@ -16,7 +16,7 @@ from pyuvm import uvm_test, ConfigDB
 from oh1_env import Oh1Env
 from oh1_progen import Knobs, Program
 from oh1_seqs import (KernelSeq, RegAccessSeq, MidRunResetSeq, DmemSweepSeq, BaseSeq, REG,
-                      IMEM, DMEM, RegStrobeSweepSeq)
+                      IMEM, DMEM, RegStrobeSweepSeq, IdleResetSeq)
 from oh1_isa import enc_i, enc_c3, enc_csrr, enc_sw, enc_lw, enc_r, K, F3_TEXIT, CSR_TID
 
 N = int(os.environ.get("OH1_N", "40"))
@@ -126,3 +126,49 @@ class Oh1StackClosureTest(Oh1BaseTest):
                                 jump=1, csr=1, vdot=1, illegal=1, bar=0, jalr_div=0, deep=8, fill=0),
                          exit_mix=dict(texit=4, wexit=2, hang=3))
         await self.kernels(N // 2, k, side=0.2)
+
+
+@pyuvm.test()
+class Oh1CdvTest(Oh1BaseTest):
+    """Coverage-driven CRV: after every batch of kernels the uncovered functional bins are
+    read back from the coverage DB and turned into constraints for the next batch
+    (oh1_cdv.ClosureLoop). Stops at local closure or after OH1_CDV_BUDGET kernels."""
+    FEEDBACK = True
+
+    async def body(self):
+        from oh1_cdv import ClosureLoop
+        budget = int(os.environ.get("OH1_CDV_BUDGET", str(2 * N)))
+        sb = ConfigDB().get(None, "", "SCOREBOARD")
+        loop = ClosureLoop(self.rng, feedback=self.FEEDBACK)
+        done, swept, c0 = 0, False, sb.cycles
+        loop.record(0, 0)
+        while done < budget:
+            knobs, targeted, actions = loop.plan()
+            if "regs" in actions:
+                if not swept:
+                    await RegStrobeSweepSeq("sweep_regs", rng=self.rng).start(self.seqr)
+                    swept = True
+                await RegAccessSeq("regs", n=20, rng=self.rng, timing=0.7).start(self.seqr)
+            if "reset" in actions:
+                await MidRunResetSeq("mrr", rng=self.rng).start(self.seqr)
+                await IdleResetSeq("idle_rst", rng=self.rng).start(self.seqr)
+            side = 0.7 if "side" in actions else 0.4
+            for _ in range(min(loop.batch, budget - done)):
+                await KernelSeq("k", knobs=knobs, side=side, watchdog=1500,
+                                rng=self.rng).start(self.seqr)
+                done += 1
+            loop.credit(knobs)
+            open_ = loop.record(done, sb.cycles - c0)
+            self.logger.info(f"CDV batch: {done} kernels, {len(targeted)} targeted, "
+                             f"{loop.size - len(open_)}/{loop.size} bins")
+            if not open_:
+                break
+        loop.dump(os.environ.get("OH1_CURVE", "cdv_curve.json"),
+                  extra=dict(test=type(self).__name__, seed=cocotb.RANDOM_SEED, budget=budget))
+
+
+@pyuvm.test()
+class Oh1CdvBaselineTest(Oh1CdvTest):
+    """Same loop, same budget and batch size, feedback off: pure constrained-random with the
+    default constraints. Only used by scripts/cdv_compare.py for the closure curve."""
+    FEEDBACK = False

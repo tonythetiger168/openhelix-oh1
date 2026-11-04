@@ -8,13 +8,13 @@ same-address stores, address aliasing and programs that never exit (watchdog).
 """
 import random
 
-from oh1_isa import (K, R_OPS, I_OPS, BR_OPS, enc_r, enc_i, enc_lw, enc_sw, enc_csrr, enc_b,
+from oh1_isa import (K, LANES, R_OPS, I_OPS, BR_OPS, enc_r, enc_i, enc_lw, enc_sw, enc_csrr, enc_b,
                      enc_u, enc_jal, enc_jalr, enc_split, enc_c3, enc_vdot4, decode,
                      F3_JOIN, F3_TMC, F3_BAR, F3_WEXIT, F3_TEXIT, F3_VDOT, F3_WSPAWN,
                      CSR_TID, CSR_LANEID, OPC_CUSTOM0)
 
 # Register conventions (soft; "chaos" mode ignores them)
-X_TID, X_TID4, X_TMC, X_LOOP, X_TMP = 1, 6, 2, 10, 11
+X_TID, X_TID4, X_TMC, X_LOOP, X_TMP, X_ONE = 1, 6, 2, 10, 11, 19
 DATA_REGS = [3, 4, 5, 7, 8, 9, 12, 13, 14, 15, 16, 17, 20, 24, 28, 31]
 
 
@@ -23,7 +23,12 @@ class Knobs:
         self.max_len = 96
         self.n_constructs = (4, 14)
         self.w = dict(alu=10, const=4, lane=4, split=5, branch=4, loop=1, lsu=5, tmc=2,
-                      jump=3, csr=2, vdot=2, illegal=1, bar=1, jalr_div=0, deep=1, fill=2)
+                      jump=3, csr=2, vdot=2, illegal=1, bar=1, jalr_div=0, deep=1, fill=2,
+                      hazard=2, memord=1, redir=2, target=0)
+        # Coverage-directed targets: (construct, args) tuples that c_target emits.
+        # Filled by the closure loop (oh1_cdv.py) from the uncovered bins.
+        self.targets = []
+        self.emitted = []            # targets ProgGen actually emitted (closure-loop credit)
         self.max_nest = 3
         self.chaos = 0.05            # probability of using any register as rd
         self.exit_mix = dict(texit=8, wexit=3, none=0)
@@ -320,9 +325,9 @@ class ProgGen:
         for _ in range(4):
             self.emit(enc_c3(F3_TEXIT))
 
-    def c_illegal(self):
+    def c_illegal(self, c=None):
         r = self.r
-        c = r.randrange(8)
+        c = r.randrange(8) if c is None else c
         if c == 0:
             w = enc_c3(F3_VDOT, self.src(), self.src(), 0, self.rd())         # FP16 vdot form
         elif c == 1:
@@ -345,6 +350,404 @@ class ProgGen:
                 if decode(w)[0] == K.ILL:
                     break
         self.emit(w)
+
+    # ---------------------------------------------------------------- sequence constructs
+    # Producer -> consumer pairs, same-word memory ordering and control transfers followed
+    # by a chosen instruction class. With random arguments they are part of plain CRV;
+    # the closure loop calls them with the arguments of an uncovered bin.
+    PRODUCERS = ("alu", "mul", "vdot", "upper", "lw", "csr", "link")
+    CONSUMERS = ("alu_a", "alu_b", "mul", "vdot", "lw_base", "sw_base", "sw_data", "br",
+                 "split", "tmc", "jalr")
+    JALR_OK = ("alu", "mul", "upper", "link")
+
+    def produce(self, prod, hz, for_jalr=False):
+        r = self.r
+        if prod == "alu":
+            if for_jalr:
+                self.emit(enc_i(K.ADDI, hz, X_TMP, 12))
+            elif r.random() < 0.5:
+                self.emit(enc_r(r.choice([k for k in R_OPS if k != K.MUL]), hz, self.src(), self.src()))
+            else:
+                self.emit(enc_i(r.choice(I_OPS), hz, self.src(), self.imm12()))
+        elif prod == "mul":
+            if for_jalr:                              # X_TMP * 1, then +12 in the JALR
+                self.emit(enc_r(K.MUL, hz, X_TMP, X_ONE))
+            else:
+                self.emit(enc_r(K.MUL, hz, self.src(), self.src()))
+        elif prod == "vdot":
+            self.emit(enc_vdot4(hz, self.src(), self.src()))
+        elif prod == "upper":
+            if for_jalr:
+                self.emit(enc_u(K.AUIPC, hz, 0))
+            else:
+                self.emit(enc_u(r.choice([K.LUI, K.AUIPC]), hz, r.getrandbits(20)))
+        elif prod == "lw":
+            self.emit(enc_lw(hz, X_TID4, 4 * r.randrange(64)))
+        elif prod == "csr":
+            self.emit(enc_csrr(hz, r.choice([CSR_TID, CSR_LANEID])))
+        elif prod == "link":
+            if r.random() < 0.5:
+                self.emit(enc_jal(hz, 4))
+            else:
+                self.emit(enc_u(K.AUIPC, X_TMP, 0))
+                self.emit(enc_jalr(hz, X_TMP, 8))
+
+    def consume(self, cons, hz):
+        r = self.r
+        if cons == "alu_a":
+            if r.random() < 0.5:
+                self.emit(enc_r(r.choice([k for k in R_OPS if k != K.MUL]), self.rd(), hz, self.src()))
+            else:
+                self.emit(enc_i(r.choice(I_OPS), self.rd(), hz, self.imm12()))
+        elif cons == "alu_b":
+            self.emit(enc_r(r.choice([k for k in R_OPS if k != K.MUL]), self.rd(), self.src(), hz))
+        elif cons == "mul":
+            a, b = (hz, self.src()) if r.random() < 0.5 else (self.src(), hz)
+            self.emit(enc_r(K.MUL, self.rd(), a, b))
+        elif cons == "vdot":
+            if r.random() < 0.3:
+                self.emit(enc_vdot4(hz, self.src(), self.src()))       # accumulator
+            else:
+                self.emit(enc_vdot4(self.rd(), hz, self.src()))
+        elif cons == "lw_base":
+            self.emit(enc_lw(self.rd(), hz, self.imm12()))
+        elif cons == "sw_base":
+            self.emit(enc_sw(self.src(), hz, self.imm12()))
+        elif cons == "sw_data":
+            self.emit(enc_sw(hz, X_TID4, 4 * r.randrange(64)))
+        elif cons == "br":
+            n = r.randint(0, 2)
+            self.emit(enc_b(r.choice(BR_OPS), hz, self.src(), (n + 1) * 4))
+            self.skip(n)
+        elif cons == "split":
+            self.split_region(hz)
+        elif cons == "tmc":
+            self.emit(enc_c3(F3_TMC, hz))
+            self.mask_maybe_zero = True
+            self.filler(1)
+            self.restore_mask()
+        elif cons == "jalr":
+            # hz = X_TMP + 12 (alu), X_TMP (mul), own pc (upper), pc+4 (link)
+            off = {"alu": 4, "mul": 16, "upper": 12, "link": 8}[self._prod]
+            self.emit(enc_jalr(self.r.choice([0, self.rd()]), hz, off))
+            self.skip(1)
+
+    def skip(self, n):
+        """n single-word instructions (jumped over: branch/jump offsets count words)."""
+        for _ in range(n):
+            self.emit(enc_i(K.ADDI, self.rd(), self.src(), self.imm12()))
+
+    def restore_mask(self):
+        self.emit(enc_i(K.ADDI, X_TMC, 0, 4))
+        self.emit(enc_c3(F3_TMC, X_TMC))
+        self.mask_maybe_zero = False
+
+    def split_region(self, pr, then_n=1, else_n=1):
+        sidx = len(self.p)
+        self.emit(0)
+        self.filler(then_n)
+        self.emit(enc_c3(F3_JOIN))
+        eidx = len(self.p)
+        self.filler(else_n)
+        self.emit(enc_c3(F3_JOIN))
+        self.p[sidx] = enc_split(pr, (eidx - sidx) * 2)
+
+    def c_hazard(self, prod=None, cons=None, gap=0):
+        """Producer writes hz, `gap` unrelated instructions, then a consumer reads hz."""
+        r = self.r
+        prod = prod or r.choice(self.PRODUCERS)
+        cons = cons or r.choice(self.CONSUMERS)
+        if cons == "jalr" and prod not in self.JALR_OK:
+            cons = "alu_a"
+        hz = r.choice([d for d in DATA_REGS if d not in (X_ONE,)])
+        jalr = cons == "jalr"
+        if jalr:
+            # the JALR consumer must jump just past itself: build the target pc first
+            if prod == "mul":
+                self.emit(enc_i(K.ADDI, X_ONE, 0, 1))
+            if prod in ("alu", "mul"):
+                self.emit(enc_u(K.AUIPC, X_TMP, 0))
+            gap = 0
+        self._prod = prod
+        self.produce(prod, hz, for_jalr=jalr)
+        for _ in range(gap):
+            self.emit(enc_i(K.ADDI, X_TMP, 0, r.randrange(64)))   # does not touch hz
+        self.consume(cons, hz)
+
+    def c_memord(self, pair=None, dist=None):
+        """Two accesses to the same word per lane (store->load, store->store, load->store)."""
+        r = self.r
+        pair = pair or r.choice(["sw_lw", "sw_sw", "lw_sw"])
+        dist = dist or r.choice([1, 2])
+        base = r.choice([X_TID4, X_TID4, 0])
+        imm = 4 * r.randrange(64)
+        first, second = pair.split("_")
+        for i, kind in enumerate((first, second)):
+            if kind == "sw":
+                self.emit(enc_sw(self.src(), base, imm))
+            else:
+                self.emit(enc_lw(r.choice([d for d in DATA_REGS]), base, imm))
+            if i == 0 and dist == 2:
+                self.emit(enc_i(K.ADDI, X_TMP, 0, r.randrange(64)))
+
+    NEXTS = ("alu", "lw", "sw", "br", "jump", "split", "join", "tmc", "exit")
+
+    def emit_next(self, nxt):
+        """One construct whose first instruction is of class `nxt`."""
+        r = self.r
+        if nxt == "alu":
+            self.emit(enc_i(r.choice(I_OPS), self.rd(), self.src(), self.imm12()))
+        elif nxt == "lw":
+            self.emit(enc_lw(self.rd(), X_TID4, 4 * r.randrange(64)))
+        elif nxt == "sw":
+            self.emit(enc_sw(self.src(), X_TID4, 4 * r.randrange(64)))
+        elif nxt == "br":
+            self.emit(enc_b(r.choice(BR_OPS), self.src(), self.src(), 8))
+            self.skip(1)
+        elif nxt == "jump":
+            self.emit(enc_jal(r.choice([0, self.rd()]), 8))
+            self.skip(1)
+        elif nxt == "split":
+            self.split_region(r.choice([X_TID, 0, X_TID4]))
+        elif nxt == "join":
+            self.emit(enc_c3(F3_JOIN))
+        elif nxt == "tmc":
+            self.emit(enc_c3(F3_TMC, X_TMC))         # X_TMC was set before the transfer
+            self.filler(1)
+            self.restore_mask()
+        elif nxt == "exit":
+            self.emit(enc_c3(r.choice([F3_TEXIT, F3_WEXIT])))
+
+    REDIRS = ("br_taken", "jal", "jalr", "split_else", "join_else")
+
+    def c_redir(self, kind=None, nxt=None):
+        """A control transfer whose target instruction is of class `nxt`."""
+        r = self.r
+        kind = kind or r.choice(self.REDIRS)
+        nxt = nxt or r.choice(self.NEXTS[:-1] if r.random() < 0.9 else self.NEXTS)
+        if nxt == "tmc":
+            self.emit(enc_i(K.ADDI, X_TMC, 0, r.randint(1, 4)))
+        if kind == "br_taken":
+            self.emit(enc_b(K.BEQ, 0, 0, 8))
+            self.skip(1)
+            self.emit_next(nxt)
+        elif kind == "jal":
+            self.emit(enc_jal(r.choice([0, self.rd()]), 8))
+            self.skip(1)
+            self.emit_next(nxt)
+        elif kind == "jalr":
+            self.emit(enc_u(K.AUIPC, X_TMP, 0))
+            self.emit(enc_jalr(r.choice([0, self.rd()]), X_TMP, 12))
+            self.skip(1)
+            self.emit_next(nxt)
+        else:
+            # split_else: all-false predicate jumps to the else path;
+            # join_else: mixed split, the then path's JOIN jumps to the else path
+            sidx = len(self.p)
+            self.emit(0)
+            self.filler(1)
+            self.emit(enc_c3(F3_JOIN))
+            eidx = len(self.p)
+            if nxt != "join":                     # "join" = empty else path
+                self.emit_next(nxt)
+            self.emit(enc_c3(F3_JOIN))
+            self.p[sidx] = enc_split(0 if kind == "split_else" else X_TID, (eidx - sidx) * 2)
+
+    def c_masked(self, kind=None, lanes=None):
+        """One instruction of class `kind` with exactly `lanes` active lanes (TMC)."""
+        r = self.r
+        lanes = r.randint(0, 4) if lanes is None else lanes
+        k = kind or r.choice(list(K)).name
+        kk = K[k]
+        if kk == K.JALR:
+            self.emit(enc_u(K.AUIPC, X_TMP, 0))     # target base, set while all lanes are on
+        self.emit(enc_i(K.ADDI, X_TMC, 0, lanes))
+        self.emit(enc_c3(F3_TMC, X_TMC))
+        if kk in R_OPS:
+            self.emit(enc_r(kk, self.rd(), self.src(), self.src()))
+        elif kk in I_OPS:
+            self.emit(enc_i(kk, self.rd(), self.src(), self.imm12()))
+        elif kk in (K.LUI, K.AUIPC):
+            self.emit(enc_u(kk, self.rd(), r.getrandbits(20)))
+        elif kk == K.JAL:
+            self.emit(enc_jal(self.rd(), 8))
+            self.skip(1)
+        elif kk == K.JALR:
+            self.emit(enc_jalr(0, X_TMP, 20))       # AUIPC, ADDI, TMC, JALR, skip -> +20
+            self.skip(1)
+        elif kk in BR_OPS:
+            self.emit(enc_b(kk, self.src(), self.src(), 8))
+            self.skip(1)
+        elif kk == K.LW:
+            self.emit(enc_lw(self.rd(), X_TID4, 4 * r.randrange(64)))
+        elif kk == K.SW:
+            self.emit(enc_sw(self.src(), X_TID4, 4 * r.randrange(64)))
+        elif kk == K.CSRR:
+            self.c_csr()
+        elif kk == K.SPLIT:
+            self.split_region(r.choice([X_TID, 0, X_TID4]))
+        elif kk == K.JOIN:
+            self.emit(enc_c3(F3_JOIN))
+        elif kk == K.TMC:
+            self.emit(enc_c3(F3_TMC, X_TMC))
+        elif kk == K.BAR:
+            self.c_bar()
+        elif kk == K.VDOT4:
+            self.c_vdot()
+        elif kk in (K.WEXIT, K.TEXIT):
+            self.emit(enc_c3(F3_WEXIT if kk == K.WEXIT else F3_TEXIT))
+        else:
+            self.c_illegal()
+        if lanes == 0:
+            self.mask_maybe_zero = True            # TMC cannot restore from an empty warp
+        else:
+            self.restore_mask()
+
+    def c_alu_to(self, kind, rdc):
+        """ALU op `kind` writing x0, a low (x1..x15) or a high (x16..x31) register."""
+        r = self.r
+        rd = 0 if rdc == "x0" else r.choice([d for d in DATA_REGS if (d < 16) == (rdc == "lo")])
+        kk = K[kind]
+        if kk in R_OPS:
+            self.emit(enc_r(kk, rd, self.src(), self.src()))
+        else:
+            imm = r.randrange(32) if kk in (K.SLLI, K.SRLI, K.SRAI) else self.imm12()
+            self.emit(enc_i(kk, rd, self.src(), imm))
+
+    def c_stack_at(self, tail, depth):
+        """Push `depth` tag entries (all-false x0 splits, each falls through to pc+4) and
+        then do `tail` at that depth: a split of type all_true / all_false / mixed / empty,
+        or join_else (a mixed split from depth-2 whose then-path JOIN pops the else entry).
+        Unwinds with JOINs. depth 8 + split overflows the 8-entry stack."""
+        r = self.r
+        n = depth - 2 if tail == "join_else" else depth
+        for _ in range(max(n, 0)):
+            self.emit(enc_split(0, 2))
+        if tail in ("mixed", "join_else"):
+            self.split_region(X_TID)
+        elif tail == "all_true":
+            self.emit(enc_i(K.ADDI, X_TMP, 0, r.randint(1, 99)))
+            self.split_region(X_TMP)
+        elif tail == "all_false":
+            self.split_region(0)
+        elif tail == "empty":
+            self.emit(enc_i(K.ADDI, X_TMC, 0, 0))
+            self.emit(enc_c3(F3_TMC, X_TMC))
+            self.split_region(X_TID)
+            self.mask_maybe_zero = True
+        for _ in range(max(n, 0)):
+            self.emit(enc_c3(F3_JOIN))
+
+    def c_tmc_at(self, arg, before):
+        """TMC with lane-0 argument class `arg` (0..4, 5 = above 4) from `before` lanes."""
+        r = self.r
+        v = arg if arg < 5 else r.choice([5, 7, 100, 0x7FF])
+        self.emit(enc_i(K.ADDI, X_TMP, 0, v))
+        self.emit(enc_i(K.ADDI, X_TMC, 0, before))
+        self.emit(enc_c3(F3_TMC, X_TMC))
+        self.emit(enc_c3(F3_TMC, X_TMP))             # TMC reads lane 0 even when it is off
+        self.filler(1)
+        self.restore_mask()
+
+    def c_fault_exit(self, how, fault):
+        """Raise the sticky faults in `fault` (ovf: nine pushes, ill: an illegal encoding),
+        then exit with `how` (TEXIT / WEXIT / watchdog)."""
+        if "ovf" in fault:
+            for _ in range(9):
+                self.emit(enc_split(0, 2))
+        if "ill" in fault:
+            self.c_illegal(self.r.randrange(5))
+        self.emit({"TEXIT": enc_c3(F3_TEXIT), "WEXIT": enc_c3(F3_WEXIT)}.get(how, enc_jal(0, 0)))
+
+    VCLS = ("zero", "one", "all_ones", "min_neg", "max_pos", "neg", "pos")
+
+    def vclass_value(self, c):
+        r = self.r
+        return {"zero": 0, "one": 1, "all_ones": 0xFFFFFFFF, "min_neg": 0x80000000,
+                "max_pos": 0x7FFFFFFF, "neg": 0x80000000 | r.getrandbits(31) | 2,
+                "pos": r.randrange(2, 0x7FFFFFFF)}[c]
+
+    def load_const(self, reg, v):
+        self.emit(enc_u(K.LUI, reg, ((v + 0x800) >> 12) & 0xFFFFF))
+        self.emit(enc_i(K.ADDI, reg, reg, ((v & 0xFFF) ^ 0x800) - 0x800))
+
+    def c_alu_vals(self, kind=None, a=None, b=None):
+        """ALU op with lane-0 operands of value class a / b (None = random); for shifts
+        b may be an amount class '0' / '31' / 'mid'."""
+        r = self.r
+        if b is not None and kind is None:
+            kind = r.choice([k.name for k in R_OPS])
+        kind = kind or r.choice([k.name for k in R_OPS + I_OPS])
+        kk = K[kind]
+        ra, rb = X_TMP, X_ONE
+        if a is not None:
+            self.load_const(ra, self.vclass_value(a))
+        else:
+            ra = self.src()
+        amt = {"0": 0, "31": 31, "mid": r.randrange(1, 31)}.get(b)
+        if kk in R_OPS:
+            if amt is not None:
+                self.emit(enc_i(K.ADDI, rb, 0, amt))
+            elif b is not None:
+                self.load_const(rb, self.vclass_value(b))
+            else:
+                rb = self.src()
+            self.emit(enc_r(kk, self.rd(), ra, rb))
+        else:
+            if amt is not None:
+                imm = amt
+            elif kk in (K.SLLI, K.SRLI, K.SRAI):
+                imm = r.randrange(32)
+            else:
+                imm = {"zero": 0, "one": 1, "all_ones": -1}.get(b, self.imm12())
+            self.emit(enc_i(kk, self.rd(), ra, imm))
+
+    def c_br_cond(self, kind, cond):
+        """Branch `kind` whose per-lane condition over a full warp is all / none / some."""
+        r = self.r
+        kk = K[kind]
+        f = {K.BEQ: lambda x, y: x == y, K.BNE: lambda x, y: x != y,
+             K.BLT: lambda x, y: x < y, K.BGE: lambda x, y: x >= y}[kk]
+        opts = []
+        for v in (-1, 0, 1, 2, 5):
+            for swap in (False, True):
+                c = [f(*((v, t) if swap else (t, v))) for t in range(LANES)]
+                got = "all" if all(c) else "none" if not any(c) else "some"
+                if got == cond:
+                    opts.append((v, swap))
+        v, swap = r.choice(opts)
+        self.emit(enc_i(K.ADDI, X_TMP, 0, v))
+        a, b = (X_TMP, X_TID) if swap else (X_TID, X_TMP)
+        self.emit(enc_b(kk, a, b, 8))
+        self.skip(1)
+
+    def c_mask_to(self, m, kind=None):
+        """Run one instruction with active mask m (any of the 16 patterns) via a split
+        whose predicate is bit tid of m."""
+        r = self.r
+        if m == 15:
+            return self.c_alu()
+        self.emit(enc_i(K.ADDI, X_TMP, 0, m))
+        self.emit(enc_r(K.SRL, X_TMP, X_TMP, X_TID))
+        self.emit(enc_i(K.ANDI, X_TMP, X_TMP, 1))
+        sidx = len(self.p)
+        self.emit(0)
+        if m and kind:
+            self.c_alu_to(kind, r.choice(["lo", "hi"])) if K[kind] in R_OPS + I_OPS else self.filler(1)
+        else:
+            self.filler(1)
+        self.emit(enc_c3(F3_JOIN))
+        eidx = len(self.p)
+        self.filler(1)
+        self.emit(enc_c3(F3_JOIN))
+        self.p[sidx] = enc_split(X_TMP, (eidx - sidx) * 2)
+
+    def c_target(self):
+        if not self.k.targets:
+            return self.c_alu()
+        name, args = self.r.choice(self.k.targets)
+        self.k.emitted.append((name, args))
+        getattr(self, "c_" + name)(*args)
 
     # ---------------------------------------------------------------- top
     def gen(self):

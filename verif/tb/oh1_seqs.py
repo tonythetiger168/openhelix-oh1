@@ -239,3 +239,11 @@ class DmemSweepSeq(BaseSeq):
     async def body(self):
         for i in range(self.lo, self.hi):
             await self.read(DMEM | (i << 2))
+
+
+class IdleResetSeq(BaseSeq):
+    """Reset while no kernel is running."""
+
+    async def body(self):
+        await self.idle(self.rng.randint(1, 4))
+        await self.reset(self.rng.randint(1, 3))
