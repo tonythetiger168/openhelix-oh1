@@ -27,6 +27,8 @@ module oh1_core_sva import oh1_pkg::*; #(
   input logic                         lw_wait_q,
   input oh1_pkg::ikind_e              kind,
   input logic [4:0]                   rd_d,
+  input logic [4:0]                   rs1_d,
+  input logic [4:0]                   rs2_d,
   input logic                         ill_d,
   input lane_mask_t                   act_mask_q,
   input logic [$clog2(STK_P+1)-1:0]   stk_ptr_q,
@@ -41,6 +43,11 @@ module oh1_core_sva import oh1_pkg::*; #(
   input logic [LANES_P-1:0]           cond_vec,
   input logic                         exec_valid_o,
   input logic                         wb_valid_o,
+  input logic [4:0]                   wb_rd_o,
+  input lane_mask_t                   wb_lane_mask_o,
+  input logic [31:0]                  wb_data_o     [LANES_P],
+  input logic [31:0]                  dmem_raddr_o  [LANES_P],
+  input logic [31:0]                  dmem_waddr_o  [LANES_P],
   input logic                         dmem_ren_o,
   input logic                         dmem_wen_o,
   input lane_mask_t                   dmem_wmask_o,
@@ -174,6 +181,39 @@ module oh1_core_sva import oh1_pkg::*; #(
                                     |=> done_q && active_q);
   c_start_at_exit: cover property (start_i && live && (kind == I_WEXIT || kind == I_TEXIT));
   s_launch_restart_after_fault: cover property (launch && done_q && (ill_q || ovf_q));
+
+  // ---- back-to-back hazards (closure targets for oh1.exec.seq.*) ----
+  // EX reads the RF in the cycle after the previous instruction wrote it; memory
+  // ops to the same word in neighbouring cycles. Lane 0 addresses are compared.
+  logic        wb_d1, lw_wb_d1, st_d1, ld_d1, ld_d2;
+  logic [4:0]  wb_rd_d1;
+  logic [11:0] st_idx_d1, ld_idx_d1, ld_idx_d2;
+  always_ff @(posedge clk_i) begin
+    wb_d1     <= wb_valid_o && wb_rd_o != 5'd0;
+    lw_wb_d1  <= wb_valid_o && wb_rd_o != 5'd0 && kind == I_LW;
+    wb_rd_d1  <= wb_rd_o;
+    st_d1     <= dmem_wen_o && dmem_wmask_o[0];
+    st_idx_d1 <= dmem_waddr_o[0][13:2];
+    ld_d1     <= dmem_ren_o && act_mask_q[0];
+    ld_idx_d1 <= dmem_raddr_o[0][13:2];
+    ld_d2     <= ld_d1;
+    ld_idx_d2 <= ld_idx_d1;
+  end
+  s_raw_rs1:    cover property (live && wb_d1 && rs1_d == wb_rd_d1);
+  s_raw_rs2:    cover property (live && wb_d1 && rs2_d == wb_rd_d1);
+  s_raw_lw_use: cover property (live && lw_wb_d1 && (rs1_d == wb_rd_d1 || rs2_d == wb_rd_d1));
+  s_st_then_ld: cover property (dmem_ren_o && act_mask_q[0] && st_d1 && dmem_raddr_o[0][13:2] == st_idx_d1);
+  s_st_then_st: cover property (dmem_wen_o && dmem_wmask_o[0] && st_d1 && dmem_waddr_o[0][13:2] == st_idx_d1);
+  s_ld_then_st: cover property (dmem_wen_o && dmem_wmask_o[0] &&
+                                ((ld_d1 && dmem_waddr_o[0][13:2] == ld_idx_d1) ||
+                                 (ld_d2 && dmem_waddr_o[0][13:2] == ld_idx_d2)));
+
+  // every register write lands in the RF of exactly the written lanes
+  for (genvar l = 0; l < LANES_P; l++) begin : g_rf_wr
+    a_rf_write: assert property (wb_valid_o && wb_rd_o != 5'd0 && wb_lane_mask_o[l]
+                                 |=> rf_q[l][$past(wb_rd_o)] == $past(wb_data_o[l]));
+    c_rf_write: cover property (wb_valid_o && wb_rd_o != 5'd0 && wb_lane_mask_o[l]);
+  end
 
   // ---- synchronous-read memory timing (SYNC_MEM=1 build only) ----
   if (SYNC_MEM != 0) begin : g_sync

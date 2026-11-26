@@ -44,6 +44,11 @@ MUTANTS = [
     ("M10 JALR divergence not flagged", "oh1_core.sv",
      "if (ill_d || (kind == I_JALR && jalr_div_c)) ill_q <= 1'b1;",
      "if (ill_d) ill_q <= 1'b1;"),
+    ("M11 TMC argument masked by lane 0's active bit", "oh1_core.sv",
+     "assign tmc_rs1_w = rs1_data[0];", "assign tmc_rs1_w = act_mask_q[0] ? rs1_data[0] : 32'b0;"),
+    ("M12 SYNC fetch-ahead ignores the LW stall", "oh1_core.sv",
+     "else if (lw_stall_c)                    if_pc_next_c = if_pc_q;",
+     "else if (lw_stall_c)                    if_pc_next_c = if_pc_q + 32'd4;"),
 ]
 
 
@@ -70,8 +75,9 @@ def main():
     md = ["# Mutation sanity check\n", "| Mutant | File | Result | First detection |",
           "|---|---|---|---|"]
     md += [f"| {n} | {f} | {res} | `{d}` |" for n, f, res, d in rows]
-    (HERE / "out").mkdir(exist_ok=True)
-    (HERE / "out" / "mutation.md").write_text("\n".join(md) + "\n")
+    dst = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "out"
+    dst.mkdir(parents=True, exist_ok=True)
+    (dst / "mutation.md").write_text("\n".join(md) + "\n")
     survived = [r for r in rows if r[2] != "killed"]
     print(f"{len(rows) - len(survived)}/{len(rows)} mutants killed")
     sys.exit(1 if survived else 0)

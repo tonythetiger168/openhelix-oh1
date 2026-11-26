@@ -120,7 +120,7 @@ def main():
     dats = [s / "coverage.dat" for s in seeds if (s / "coverage.dat").exists()]
     inv_p = out / "sv_inventory.json"
     if not inv_p.exists():
-        subprocess.run([sys.executable, str(HERE / "scripts" / "sv_check.py")], check=True)
+        subprocess.run([sys.executable, str(HERE / "scripts" / "sv_check.py"), str(out)], check=True)
     inv = json.loads(inv_p.read_text())
     ex_cfg = yaml.safe_load(open(HERE / "coverage_exclusions.yml")) or []
     excl = Excl(ex_cfg, inv["pkg_helpers"])
